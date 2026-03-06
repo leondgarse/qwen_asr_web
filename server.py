@@ -116,7 +116,7 @@ def load_models():
     if get_env_bool("ENABLE_ASR_MODEL", "true"):
         if Qwen3ASRModel is None:
             raise RuntimeError("qwen_asr not installed (Qwen3ASRModel missing).")
-        _default_asr = next((m for m in ("Qwen3-ASR-1.7B", "Qwen3-ASR-0.6B") if os.path.isdir(m)), "Qwen3-ASR-1.7B")
+        _default_asr = next((m for m in ("Qwen/Qwen3-ASR-1.7B", "Qwen/Qwen3-ASR-0.6B") if os.path.isdir(m)), "Qwen/Qwen3-ASR-1.7B")
         model_name = os.getenv("ASR_MODEL_NAME", _default_asr)
         logger.info(f"Loading ASR Model: {model_name}...")
         os.environ.setdefault("VLLM_TARGET_DEVICE", "cpu")
@@ -139,7 +139,7 @@ def load_models():
     if get_env_bool("ENABLE_ALIGNER_MODEL", "true"):
         if Qwen3ForcedAligner is None:
             raise RuntimeError("qwen_asr not installed (Qwen3ForcedAligner missing).")
-        aligner_name = os.getenv("ALIGNER_MODEL_NAME", "Qwen3-ForcedAligner-0.6B")
+        aligner_name = os.getenv("ALIGNER_MODEL_NAME", "Qwen/Qwen3-ForcedAligner-0.6B")
         logger.info(f"Loading Aligner Model: {aligner_name}...")
         models["aligner"] = Qwen3ForcedAligner.from_pretrained(
             aligner_name,
