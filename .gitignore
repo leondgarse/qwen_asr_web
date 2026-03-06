@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Model weights (large binary files)
+Qwen/Qwen3-ASR-*/
+Qwen/Qwen3-ForcedAligner-*/
+
+# Demucs vocal separation output
+separated/
+
+# Transcription output
+*.jsonl
+transcription*.json
+
+# Audio/video input files
+data/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
