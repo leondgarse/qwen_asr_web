@@ -20,12 +20,12 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 | `Qwen3-ASR-1.7B` | ~3.5 GB | Speech recognition |
 | `Qwen3-ForcedAligner-0.6B` | ~1.2 GB | Word-level timestamps |
 
-Both are loaded from local directories at startup.
+Both are loaded from local directories at startup. ASR inference is handled by [`qwen_asr_inference`](https://github.com/QwenLM/Qwen3-ASR).
 
 ## Setup
 
 ```bash
-pip install qwen-asr[vllm] fastapi uvicorn soundfile webrtcvad demucs scipy pypdf tqdm websockets psutil sounddevice
+pip install -r requirements.txt
 ```
 
 ## Usage
