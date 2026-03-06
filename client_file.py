@@ -20,7 +20,7 @@ from tqdm import tqdm
 SAMPLING_RATE = 16000
 CHANNELS = 1
 MIN_SEGMENT_DURATION_S = 1.5  # skip VAD segments shorter than this (slide transitions, applause pops)
-CONTAMINATION_WINDOW = 6      # consecutive words that must appear verbatim in context to flag contamination
+CONTAMINATION_WINDOW = 6  # consecutive words that must appear verbatim in context to flag contamination
 
 
 def extract_context(file_path: str, max_chars: int = 1000) -> str:
@@ -43,7 +43,7 @@ def extract_context(file_path: str, max_chars: int = 1000) -> str:
         raise ValueError(f"Unsupported context file type: {ext!r}. Expected .pdf or .md/.markdown.")
 
     instruction = "The following is background reference text to help with vocabulary and spelling. Do NOT read or transcribe this text. Only transcribe the audio. Reference: "
-    final_context = instruction + text.replace('\n', ' ')
+    final_context = instruction + text.replace("\n", " ")
     print(f"Extracted {len(text)} chars from {file_path} as reference context.")
     return final_context
 
@@ -73,10 +73,14 @@ def extract_vocals(audio_path: str, device: str = "cuda", separated_dir: str | N
         runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demucs_runner.py")
         subprocess.run(
             [
-                sys.executable, runner,
-                "--two-stems", "vocals",
-                "-d", device,
-                "-o", separated_dir,
+                sys.executable,
+                runner,
+                "--two-stems",
+                "vocals",
+                "-d",
+                device,
+                "-o",
+                separated_dir,
                 audio_path,
             ],
             check=True,
@@ -86,10 +90,7 @@ def extract_vocals(audio_path: str, device: str = "cuda", separated_dir: str | N
         raise RuntimeError(f"Demucs failed: {e}") from e
 
     if not os.path.exists(vocals_path):
-        raise FileNotFoundError(
-            f"Demucs did not produce expected output at: {vocals_path}\n"
-            f"Contents of {separated_dir}: {os.listdir(separated_dir)}"
-        )
+        raise FileNotFoundError(f"Demucs did not produce expected output at: {vocals_path}\n" f"Contents of {separated_dir}: {os.listdir(separated_dir)}")
 
     print(f"Vocals saved to: {vocals_path}")
     return vocals_path
@@ -119,7 +120,7 @@ def is_context_contamination(text: str, context: str) -> bool:
         return False
     context_lower = context.lower()
     for i in range(len(words) - CONTAMINATION_WINDOW + 1):
-        phrase = " ".join(words[i:i + CONTAMINATION_WINDOW])
+        phrase = " ".join(words[i : i + CONTAMINATION_WINDOW])
         if phrase in context_lower:
             return True
     return False
@@ -145,7 +146,7 @@ async def stream_audio_segment(ws, audio_int16: np.ndarray, sample_rate: int, co
     chunk_size = int(sample_rate * 0.1)
 
     for i in range(0, len(audio_int16), chunk_size):
-        chunk = audio_int16[i:i + chunk_size]
+        chunk = audio_int16[i : i + chunk_size]
         await ws.send(int16_to_bytes(chunk))
         # Small sleep to yield control and simulate streaming / avoid overwhelming server buffers
         await asyncio.sleep(0.01)
@@ -160,22 +161,22 @@ async def receiver(ws) -> str:
         try:
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             evt = json.loads(message)
-            msg_type = evt.get('type')
-            text = evt.get('text', '')
-            lang = evt.get('language', '')
+            msg_type = evt.get("type")
+            text = evt.get("text", "")
+            lang = evt.get("language", "")
 
-            if msg_type == 'ready':
+            if msg_type == "ready":
                 pass
-            elif msg_type == 'partial':
+            elif msg_type == "partial":
                 sys.stdout.write(f"\r[Partial] ({lang}): {text}")
                 sys.stdout.flush()
-            elif msg_type == 'final':
+            elif msg_type == "final":
                 sys.stdout.write(f"\r[Final] ({lang}): {text}\n")
                 sys.stdout.flush()
                 final_text = text
-            elif msg_type == 'error':
+            elif msg_type == "error":
                 print(f"\n[{timestamp}] [Error]: {evt.get('message')}")
-            elif msg_type == 'info':
+            elif msg_type == "info":
                 pass
 
         except json.JSONDecodeError:
@@ -201,7 +202,7 @@ def apply_vad(audio_int16: np.ndarray, sample_rate: int, min_silence_duration_s:
     silence_counter = 0
 
     for i in range(0, len(audio_int16) - frame_size, frame_size):
-        frame = audio_int16[i:i + frame_size]
+        frame = audio_int16[i : i + frame_size]
         if len(frame) < frame_size:
             break
 
@@ -229,20 +230,29 @@ def apply_vad(audio_int16: np.ndarray, sample_rate: int, min_silence_duration_s:
 def read_audio(file_path: str) -> tuple[np.ndarray, int]:
     """Read audio file, using ffmpeg for formats soundfile can't handle (e.g. mp3, m4a)."""
     try:
-        audio, sr = sf.read(file_path, dtype='int16')
+        audio, sr = sf.read(file_path, dtype="int16")
         return audio, sr
     except Exception:
         proc = subprocess.run(
             ["ffmpeg", "-y", "-i", file_path, "-f", "wav", "-"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         if proc.returncode != 0:
             raise RuntimeError(f"FFmpeg failed: {proc.stderr.decode(errors='ignore')}")
-        audio, sr = sf.read(io.BytesIO(proc.stdout), dtype='int16')
+        audio, sr = sf.read(io.BytesIO(proc.stdout), dtype="int16")
         return audio, sr
 
 
-async def process_file(file_path: str, endpoint: str, context: str = "", output: str | None = None, vocal_extraction: bool = False, demucs_device: str = "cuda", separated_dir: str | None = None):
+async def process_file(
+    file_path: str,
+    endpoint: str,
+    context: str = "",
+    output: str | None = None,
+    vocal_extraction: bool = False,
+    demucs_device: str = "cuda",
+    separated_dir: str | None = None,
+):
     # ── Step 1: Vocal extraction (optional) ───────────────────────────────────
     audio_source = file_path
     if vocal_extraction:
@@ -302,9 +312,7 @@ async def process_file(file_path: str, endpoint: str, context: str = "", output:
 
             try:
                 async with websockets.connect(endpoint, max_size=None) as ws:
-                    sender_task = asyncio.create_task(
-                        stream_audio_segment(ws, segment_audio, SAMPLING_RATE, context=context)
-                    )
+                    sender_task = asyncio.create_task(stream_audio_segment(ws, segment_audio, SAMPLING_RATE, context=context))
                     receiver_task = asyncio.create_task(receiver(ws))
 
                     _, text = await asyncio.gather(sender_task, receiver_task)
@@ -335,7 +343,11 @@ async def main():
     parser.add_argument("-l", "--language", default="English", help="Forced language full name (e.g. English, Chinese, Japanese)")
     parser.add_argument("-o", "--output", default=None, help="Output JSONL file path (default: <audio_stem>.jsonl)")
     parser.add_argument("--context", default=None, help="Path to PDF or Markdown reference document for vocabulary context")
-    parser.add_argument("--vocal-extraction", action="store_true", help="Run demucs vocal extraction before ASR. Useful for event recordings with background music. Separated tracks are cached in --separated-dir for reuse.")
+    parser.add_argument(
+        "--vocal-extraction",
+        action="store_true",
+        help="Run demucs vocal extraction before ASR. Useful for event recordings with background music. Separated tracks are cached in --separated-dir for reuse.",
+    )
     parser.add_argument("--demucs-device", default="cuda", help="Device for demucs: cuda (default) or cpu / cuda:N.")
     parser.add_argument("--separated-dir", default=None, help="Where to store/reuse demucs output (default: separated/ next to the audio file).")
     args = parser.parse_args()
@@ -349,7 +361,15 @@ async def main():
     if args.context:
         context = extract_context(args.context)
 
-    await process_file(args.audio, endpoint, context=context, output=args.output, vocal_extraction=args.vocal_extraction, demucs_device=args.demucs_device, separated_dir=args.separated_dir)
+    await process_file(
+        args.audio,
+        endpoint,
+        context=context,
+        output=args.output,
+        vocal_extraction=args.vocal_extraction,
+        demucs_device=args.demucs_device,
+        separated_dir=args.separated_dir,
+    )
 
 
 if __name__ == "__main__":

@@ -27,11 +27,13 @@ from qwen_asr_inference import Qwen3ASRModel, Qwen3ForcedAligner
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 # -----------------------------
 # Config
 # -----------------------------
 def get_env_bool(key: str, default: str = "true") -> bool:
     return os.getenv(key, default).lower() in ("true", "1", "yes", "on")
+
 
 MAX_CONCURRENT_DECODE = int(os.getenv("MAX_CONCURRENT_DECODE", "4"))
 MAX_CONCURRENT_INFER = int(os.getenv("MAX_CONCURRENT_INFER", "1"))  # GPU: usually 1
@@ -52,6 +54,7 @@ model_ready_event = asyncio.Event()
 decode_sem = asyncio.Semaphore(MAX_CONCURRENT_DECODE)
 infer_sem = asyncio.Semaphore(MAX_CONCURRENT_INFER)
 
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -59,18 +62,32 @@ async def to_thread_limited(sem: asyncio.Semaphore, fn, *args, **kwargs):
     async with sem:
         return await asyncio.to_thread(fn, *args, **kwargs)
 
+
 def map_language(lang_code: Optional[str]) -> Optional[str]:
     """Map ISO code to Qwen full name."""
     if lang_code is None:
         return None
     mapping = {
-        "en": "English", "de": "German", "fr": "French", "es": "Spanish",
-        "it": "Italian", "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
-        "ru": "Russian", "pt": "Portuguese", "nl": "Dutch", "tr": "Turkish",
-        "sv": "Swedish", "id": "Indonesian", "vi": "Vietnamese",
-        "hi": "Hindi", "ar": "Arabic",
+        "en": "English",
+        "de": "German",
+        "fr": "French",
+        "es": "Spanish",
+        "it": "Italian",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "zh": "Chinese",
+        "ru": "Russian",
+        "pt": "Portuguese",
+        "nl": "Dutch",
+        "tr": "Turkish",
+        "sv": "Swedish",
+        "id": "Indonesian",
+        "vi": "Vietnamese",
+        "hi": "Hindi",
+        "ar": "Arabic",
     }
     return mapping.get(lang_code.lower(), lang_code)
+
 
 def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, int]:
     """
@@ -104,6 +121,7 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
             return wav, sr
     finally:
         os.unlink(tmp_path)
+
 
 # -----------------------------
 # Model loading
@@ -178,6 +196,7 @@ def load_models():
     model_ready_event.set()
     logger.info("Server is ready to accept requests.")
 
+
 # -----------------------------
 # Lifespan
 # -----------------------------
@@ -201,6 +220,7 @@ async def lifespan(app: FastAPI):
         executor.shutdown(wait=False, cancel_futures=True)
         logger.info("Shutdown complete.")
 
+
 # -----------------------------
 # App
 # -----------------------------
@@ -217,6 +237,7 @@ app.add_middleware(
 # -----------------------------
 # Endpoints
 # -----------------------------
+
 
 @app.get("/health")
 async def health():
@@ -238,6 +259,7 @@ async def health():
         info["memory"]["gpu_allocated_mb"] = torch.cuda.memory_allocated() // (1024 * 1024)
         info["memory"]["gpu_reserved_mb"] = torch.cuda.memory_reserved() // (1024 * 1024)
     return info
+
 
 @app.post("/transcribe")
 async def transcribe(
@@ -291,9 +313,7 @@ async def transcribe(
                 )
 
             for i, res in enumerate(results):
-                response_list.append(
-                    {"text": res.text, "language": res.language, "timestamps": alignment_results[i]}
-                )
+                response_list.append({"text": res.text, "language": res.language, "timestamps": alignment_results[i]})
         else:
             for res in results:
                 response_list.append({"text": res.text, "language": res.language})
@@ -305,6 +325,7 @@ async def transcribe(
     except Exception as e:
         logger.exception(f"Inference failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.websocket("/transcribe-streaming")
 async def websocket_endpoint(
@@ -383,12 +404,10 @@ async def websocket_endpoint(
                         context = data.get("context", "")
 
                         if client_sr != STREAM_EXPECT_SR or fmt not in (None, "pcm_s16le"):
-                            await ws.send_json(
-                                {"type": "error", "message": f"Only pcm_s16le @ {STREAM_EXPECT_SR}Hz supported"}
-                            )
+                            await ws.send_json({"type": "error", "message": f"Only pcm_s16le @ {STREAM_EXPECT_SR}Hz supported"})
                             await ws.close(code=1003)
                             return
-                            
+
                         # Init streaming state off event loop + limited concurrency (GPU touch)
                         try:
                             async with infer_sem:
@@ -416,7 +435,7 @@ async def websocket_endpoint(
                             await flush_and_infer(send_partial=False)
                             async with infer_sem:
                                 await asyncio.to_thread(models["asr"].finish_streaming_transcribe, state)
-    
+
                             await ws.send_json({"type": "final", "text": state.text, "language": state.language})
                         await ws.close(code=1000)
                         return
@@ -450,6 +469,7 @@ async def websocket_endpoint(
             await ws.close(code=1011, reason="internal error")
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     # NOTE: for GPU models, keep workers=1 unless you deliberately replicate the model per worker.

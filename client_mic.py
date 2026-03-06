@@ -16,27 +16,31 @@ FRAME_DURATION_MS = 30
 FRAME_SIZE = int(SAMPLING_RATE * FRAME_DURATION_MS / 1000)  # 480 samples @ 16kHz, 30ms
 
 # VAD settings
-VAD_AGGRESSIVENESS = 3                              # 0–3; 3 = most aggressive (best for noisy environments)
-SPEECH_START_FRAMES = 5                             # consecutive speech frames to trigger recording
-SILENCE_END_FRAMES = int(1000 / FRAME_DURATION_MS) # 1000ms silence → end of utterance (~33 frames)
-MIN_SPEECH_FRAMES = int(400 / FRAME_DURATION_MS)   # ~400ms minimum speech to send
-LEAD_IN_FRAMES = 5                                  # frames prepended before speech starts
+VAD_AGGRESSIVENESS = 3  # 0–3; 3 = most aggressive (best for noisy environments)
+SPEECH_START_FRAMES = 5  # consecutive speech frames to trigger recording
+SILENCE_END_FRAMES = int(1000 / FRAME_DURATION_MS)  # 1000ms silence → end of utterance (~33 frames)
+MIN_SPEECH_FRAMES = int(400 / FRAME_DURATION_MS)  # ~400ms minimum speech to send
+LEAD_IN_FRAMES = 5  # frames prepended before speech starts
 MAX_UTTERANCE_FRAMES = int(60_000 / FRAME_DURATION_MS)  # force-flush after 60s regardless
 
 
 async def transcribe_segment(audio_int16: np.ndarray, endpoint: str) -> str:
     """Send a PCM segment to the server over a fresh WebSocket and return the final text."""
     async with websockets.connect(endpoint, max_size=None) as ws:
-        await ws.send(json.dumps({
-            "type": "start",
-            "format": "pcm_s16le",
-            "sample_rate_hz": SAMPLING_RATE,
-            "channels": CHANNELS,
-        }))
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "start",
+                    "format": "pcm_s16le",
+                    "sample_rate_hz": SAMPLING_RATE,
+                    "channels": CHANNELS,
+                }
+            )
+        )
 
         chunk_size = int(SAMPLING_RATE * 0.1)  # 100ms chunks
         for i in range(0, len(audio_int16), chunk_size):
-            await ws.send(audio_int16[i:i + chunk_size].tobytes())
+            await ws.send(audio_int16[i : i + chunk_size].tobytes())
             await asyncio.sleep(0)  # yield control to event loop
 
         await ws.send(json.dumps({"type": "stop"}))
@@ -164,12 +168,9 @@ async def transcription_loop(segment_queue: asyncio.Queue, endpoint: str, verbos
 
 async def main():
     parser = argparse.ArgumentParser(description="Qwen3-ASR Real-time Mic Client")
-    parser.add_argument("-e", "--endpoint", default="ws://localhost:8000/transcribe-streaming",
-                        help="WebSocket Endpoint URL")
-    parser.add_argument("-l", "--language", default=None,
-                        help="Language code or full name (e.g. en, English, zh, Chinese)")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="Print VAD debug info (speech triggers, silence counters, etc.)")
+    parser.add_argument("-e", "--endpoint", default="ws://localhost:8000/transcribe-streaming", help="WebSocket Endpoint URL")
+    parser.add_argument("-l", "--language", default=None, help="Language code or full name (e.g. en, English, zh, Chinese)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Print VAD debug info (speech triggers, silence counters, etc.)")
     args = parser.parse_args()
 
     endpoint = args.endpoint
@@ -191,8 +192,7 @@ async def main():
     print(f"VAD aggressiveness={VAD_AGGRESSIVENESS}, silence_end={SILENCE_END_FRAMES * FRAME_DURATION_MS}ms")
     print("Speak into the mic. Press Ctrl+C to stop.\n")
 
-    with sd.InputStream(samplerate=SAMPLING_RATE, channels=CHANNELS, dtype='int16',
-                        blocksize=FRAME_SIZE, callback=mic_callback):
+    with sd.InputStream(samplerate=SAMPLING_RATE, channels=CHANNELS, dtype="int16", blocksize=FRAME_SIZE, callback=mic_callback):
         vad_task = asyncio.create_task(vad_loop(audio_queue, segment_queue, verbose=args.verbose))
         asr_task = asyncio.create_task(transcription_loop(segment_queue, endpoint, verbose=args.verbose))
         try:

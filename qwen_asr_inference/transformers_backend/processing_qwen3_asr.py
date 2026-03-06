@@ -66,9 +66,7 @@ class Qwen3ASRProcessor(ProcessorMixin):
     feature_extractor_class = "WhisperFeatureExtractor"
     tokenizer_class = ("Qwen2Tokenizer", "Qwen2TokenizerFast")
 
-    def __init__(
-        self, feature_extractor=None, tokenizer=None, chat_template=None
-    ):
+    def __init__(self, feature_extractor=None, tokenizer=None, chat_template=None):
         super().__init__(feature_extractor, tokenizer, chat_template=chat_template)
         self.audio_token = self.tokenizer.audio_token
         self.audio_bos_token = self.tokenizer.audio_bos_token
@@ -109,12 +107,8 @@ class Qwen3ASRProcessor(ProcessorMixin):
             output_kwargs["audio_kwargs"]["padding"] = True
             output_kwargs["audio_kwargs"]["truncation"] = False
             audio_inputs = self.feature_extractor(audio, **output_kwargs["audio_kwargs"])
-            audio_inputs["feature_attention_mask"] = audio_inputs.pop(
-                "attention_mask"
-            )  # rename feature_attention_mask to prevent conflicts later on
-            audio_inputs["input_features"] = audio_inputs.pop(
-                "input_features"
-            )  # rename input_features to prevent conflicts later on
+            audio_inputs["feature_attention_mask"] = audio_inputs.pop("attention_mask")  # rename feature_attention_mask to prevent conflicts later on
+            audio_inputs["input_features"] = audio_inputs.pop("input_features")  # rename input_features to prevent conflicts later on
             audio_lengths = iter(_get_feat_extract_output_lengths(audio_inputs["feature_attention_mask"].sum(-1)))
         else:
             audio_inputs = {}
@@ -197,13 +191,7 @@ class Qwen3ASRProcessor(ProcessorMixin):
     def model_input_names(self):
         tokenizer_input_names = self.tokenizer.model_input_names
         feature_extractor_input_names = self.feature_extractor.model_input_names
-        return list(
-            dict.fromkeys(
-                tokenizer_input_names
-                + feature_extractor_input_names
-                + ["feature_attention_mask"]
-            )
-        )
+        return list(dict.fromkeys(tokenizer_input_names + feature_extractor_input_names + ["feature_attention_mask"]))
 
 
 __all__ = ["Qwen3ASRProcessor"]

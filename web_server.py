@@ -10,6 +10,7 @@ Usage:
     MISTRAL_API_KEY=...       python web_server.py
     Then open http://localhost:8001
 """
+
 import os
 import io
 import json
@@ -28,24 +29,27 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Qwen3-ASR Studio")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ── Model registry ───────────────────────────────────────────
 MODELS = {
     "claude": {
-        "label":   "Claude (Anthropic)",
+        "label": "Claude (Anthropic)",
         "env_key": "ANTHROPIC_API_KEY",
         "default_model": "claude-haiku-4-5-20251001",
     },
     "gemini": {
-        "label":   "Gemini (Google)",
+        "label": "Gemini (Google)",
         "env_key": "GOOGLE_API_KEY",
         "default_model": "gemini-2.0-flash",
     },
     "mistral": {
-        "label":   "Mistral",
+        "label": "Mistral",
         "env_key": "MISTRAL_API_KEY",
         "default_model": "mistral-small-latest",
     },
@@ -213,6 +217,7 @@ async def extract_context(file: UploadFile = File(...)):
     if ext == ".pdf":
         try:
             from pypdf import PdfReader
+
             text = "".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(data)).pages)[:4000]
         except ImportError:
             raise HTTPException(503, detail="Run: pip install pypdf")

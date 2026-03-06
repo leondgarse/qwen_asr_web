@@ -49,6 +49,7 @@ from .utils import (
 try:
     from .vllm_backend import Qwen3ASRForConditionalGeneration
     from vllm import ModelRegistry
+
     ModelRegistry.register_model("Qwen3ASRForConditionalGeneration", Qwen3ASRForConditionalGeneration)
 except:
     pass
@@ -69,6 +70,7 @@ class ASRTranscription:
             Forced aligner output (ForcedAlignResult).
             Present only when return_time_stamps=True.
     """
+
     language: str
     text: str
     time_stamps: Optional[Any] = None
@@ -110,6 +112,7 @@ class ASRStreamingState:
             Internal accumulated decoded raw text (before parse_asr_output normalization).
             Used for rollback/token trimming and as prefix for prompting.
     """
+
     unfixed_chunk_num: int
     unfixed_token_num: int
     chunk_size_sec: float
@@ -131,7 +134,7 @@ class ASRStreamingState:
 class Qwen3ASRModel:
     """
     Unified inference wrapper for Qwen3-ASR with two backends:
-      - Transformers backend 
+      - Transformers backend
       - vLLM backend
 
     It optionally supports time stamp output via Qwen3-ForcedAligner.
@@ -209,9 +212,7 @@ class Qwen3ASRModel:
 
         forced_aligner_model = None
         if forced_aligner is not None:
-            forced_aligner_model = Qwen3ForcedAligner.from_pretrained(
-                forced_aligner, **(forced_aligner_kwargs or {})
-            )
+            forced_aligner_model = Qwen3ForcedAligner.from_pretrained(forced_aligner, **(forced_aligner_kwargs or {}))
 
         return cls(
             backend="transformers",
@@ -262,9 +263,7 @@ class Qwen3ASRModel:
             from vllm import LLM as vLLM
             from vllm import SamplingParams
         except Exception as e:
-            raise ImportError(
-                "vLLM is not available. Install with: pip install qwen-asr[vllm]"
-            ) from e
+            raise ImportError("vLLM is not available. Install with: pip install qwen-asr[vllm]") from e
 
         llm = vLLM(model=model, **kwargs)
 
@@ -273,9 +272,7 @@ class Qwen3ASRModel:
 
         forced_aligner_model = None
         if forced_aligner is not None:
-            forced_aligner_model = Qwen3ForcedAligner.from_pretrained(
-                forced_aligner, **(forced_aligner_kwargs or {})
-            )
+            forced_aligner_model = Qwen3ForcedAligner.from_pretrained(forced_aligner, **(forced_aligner_kwargs or {}))
 
         return cls(
             backend="vllm",
@@ -413,9 +410,7 @@ class Qwen3ASRModel:
                 chunk_list(to_align_text, self.max_inference_batch_size),
                 chunk_list(to_align_lang, self.max_inference_batch_size),
             ):
-                aligned_results.extend(
-                    self.forced_aligner.align(audio=a_chunk, text=t_chunk, language=l_chunk)
-                )
+                aligned_results.extend(self.forced_aligner.align(audio=a_chunk, text=t_chunk, language=l_chunk))
 
             # offset fix
             for k, idx in enumerate(to_align_idx):
@@ -510,7 +505,7 @@ class Qwen3ASRModel:
             text_ids = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
 
             decoded = self.processor.batch_decode(
-                text_ids.sequences[:, inputs["input_ids"].shape[1]:],
+                text_ids.sequences[:, inputs["input_ids"].shape[1] :],
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )
@@ -555,9 +550,7 @@ class Qwen3ASRModel:
             return None
         items = []
         for it in result.items:
-            items.append(type(it)(text=it.text, 
-                                  start_time=round(it.start_time + offset_sec, 3), 
-                                  end_time=round(it.end_time + offset_sec, 3)))
+            items.append(type(it)(text=it.text, start_time=round(it.start_time + offset_sec, 3), end_time=round(it.end_time + offset_sec, 3)))
         return type(result)(items=items)
 
     def _merge_align_results(self, results: List[Any]) -> Optional[Any]:
@@ -708,7 +701,7 @@ class Qwen3ASRModel:
 
         # Convert to float32 PCM in [-1, 1] if int16 provided
         if x.dtype == np.int16:
-            x = (x.astype(np.float32) / 32768.0)
+            x = x.astype(np.float32) / 32768.0
         else:
             x = x.astype(np.float32, copy=False)
 
@@ -737,7 +730,7 @@ class Qwen3ASRModel:
                 while True:
                     end_idx = max(0, len(cur_ids) - k)
                     prefix = self.processor.tokenizer.decode(cur_ids[:end_idx]) if end_idx > 0 else ""
-                    if '\ufffd' not in prefix:
+                    if "\ufffd" not in prefix:
                         break
                     else:
                         if end_idx == 0:
@@ -822,21 +815,10 @@ class Qwen3ASRModel:
             outputs = self.model.generate([inp], sampling_params=self.sampling_params, use_tqdm=False)
             gen_text = outputs[0].outputs[0].text
         else:
-            inputs = self.processor(
-                text=prompt,
-                audios=[state.audio_accum],
-                return_tensors="pt"
-            ).to(self.model.device)
-            gen = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens or 4096,
-                use_cache=True,
-                temperature=0.0
-            )
+            inputs = self.processor(text=prompt, audios=[state.audio_accum], return_tensors="pt").to(self.model.device)
+            gen = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens or 4096, use_cache=True, temperature=0.0)
             # Remove prompt from output
-            gen_text = self.processor.batch_decode(
-                gen[:, inputs.input_ids.shape[1]:], skip_special_tokens=True
-            )[0]
+            gen_text = self.processor.batch_decode(gen[:, inputs.input_ids.shape[1] :], skip_special_tokens=True)[0]
 
         state._raw_decoded = (prefix + gen_text) if prefix is not None else gen_text
         lang, txt = parse_asr_output(state._raw_decoded, user_language=state.force_language)

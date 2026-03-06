@@ -95,11 +95,7 @@ from vllm.transformers_utils.processor import cached_processor_from_config
 from vllm.model_executor.models.vision import (
     get_vit_attn_backend,
 )
-from ..transformers_backend.configuration_qwen3_asr import (
-    Qwen3ASRConfig,
-    Qwen3ASRThinkerConfig,
-    Qwen3ASRAudioEncoderConfig
-)
+from ..transformers_backend.configuration_qwen3_asr import Qwen3ASRConfig, Qwen3ASRThinkerConfig, Qwen3ASRAudioEncoderConfig
 from ..transformers_backend.processing_qwen3_asr import (
     Qwen3ASRProcessor,
 )
@@ -115,9 +111,7 @@ logger = init_logger(__name__)
 def _get_feat_extract_output_lengths(input_lengths: torch.Tensor):
     input_lengths_leave = input_lengths % 100
     feat_lengths = (input_lengths_leave - 1) // 2 + 1
-    output_lengths = (
-        ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // 100) * 13
-    )
+    output_lengths = ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // 100) * 13
     return output_lengths
 
 
@@ -137,18 +131,10 @@ class SinusoidsPositionEmbedding(nn.Module):
             raise ValueError("SinusoidsPositionEmbedding needs even channels input")
 
         log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
-        inv_timescales = torch.exp(
-            -log_timescale_increment * torch.arange(channels // 2).float()
-        )
-        scaled_time = (
-            torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
-        )
-        positional_embedding = torch.cat(
-            [torch.sin(scaled_time), torch.cos(scaled_time)], dim=1
-        )
-        self.register_buffer(
-            "positional_embedding", positional_embedding, persistent=False
-        )
+        inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2).float())
+        scaled_time = torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
+        positional_embedding = torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
+        self.register_buffer("positional_embedding", positional_embedding, persistent=False)
 
     def forward(self, seqlen: int) -> torch.Tensor:
         return self.positional_embedding[:seqlen, :]
@@ -171,10 +157,7 @@ class Qwen3ASRAudioAttention(nn.Module):
         self.num_local_heads = self.num_heads // tp_size
 
         if (self.head_dim * self.num_heads) != self.embed_dim:
-            raise ValueError(
-                f"embed_dim must be divisible by num_heads (got `embed_dim`: "
-                f"{self.embed_dim} and `num_heads`: {self.num_heads})."
-            )
+            raise ValueError(f"embed_dim must be divisible by num_heads (got `embed_dim`: " f"{self.embed_dim} and `num_heads`: {self.num_heads}).")
 
         self.scaling = self.head_dim**-0.5
 
@@ -237,9 +220,7 @@ class Qwen3ASRAudioEncoderLayer(nn.Module):
     ):
         super().__init__()
         self.embed_dim = config.d_model
-        self.self_attn = Qwen3ASRAudioAttention(
-            config, multimodal_config=multimodal_config, prefix=f"{prefix}.self_attn"
-        )
+        self.self_attn = Qwen3ASRAudioAttention(config, multimodal_config=multimodal_config, prefix=f"{prefix}.self_attn")
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.activation_fn = _ACTIVATION_REGISTRY[config.activation_function]
         self.fc1 = ColumnParallelLinear(
@@ -287,9 +268,7 @@ class Qwen3ASRAudioEncoderLayer(nn.Module):
         # Clamp for numerical stability with fp16
         if hidden_states.dtype == torch.float16:
             clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(
-                hidden_states, min=-clamp_value, max=clamp_value
-            )
+            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
         return hidden_states
 
@@ -313,9 +292,7 @@ class Qwen3ASRAudioEncoder(nn.Module):
         self.conv_chunksize = config.conv_chunksize
 
         # Position embedding
-        self.positional_embedding = SinusoidsPositionEmbedding(
-            self.max_source_positions, embed_dim
-        )
+        self.positional_embedding = SinusoidsPositionEmbedding(self.max_source_positions, embed_dim)
 
         # Convolutional layers for mel-spectrogram processing
         self.conv2d1 = nn.Conv2d(1, config.downsample_hidden_size, 3, 2, padding=1)
@@ -334,9 +311,7 @@ class Qwen3ASRAudioEncoder(nn.Module):
             padding=1,
         )
 
-        conv_out_dim = config.downsample_hidden_size * (
-            (((config.num_mel_bins + 1) // 2 + 1) // 2 + 1) // 2
-        )
+        conv_out_dim = config.downsample_hidden_size * ((((config.num_mel_bins + 1) // 2 + 1) // 2 + 1) // 2)
         self.conv_out = nn.Linear(conv_out_dim, config.d_model, bias=False)
 
         # Transformer encoder layers
@@ -358,11 +333,7 @@ class Qwen3ASRAudioEncoder(nn.Module):
         self.proj2 = nn.Linear(config.d_model, config.output_dim)
 
         # Get attention backend
-        attn_backend_override = (
-            multimodal_config.mm_encoder_attn_backend
-            if multimodal_config is not None
-            else None
-        )
+        attn_backend_override = multimodal_config.mm_encoder_attn_backend if multimodal_config is not None else None
         self.attn_backend = get_vit_attn_backend(
             head_size=config.d_model // config.encoder_attention_heads,
             dtype=torch.get_default_dtype(),
@@ -406,18 +377,14 @@ class Qwen3ASRAudioEncoder(nn.Module):
 
         # Split input features into chunks and pad
         chunk_list = input_features.T.split(chunk_lengths.tolist(), dim=0)
-        padded_feature = nn.utils.rnn.pad_sequence(
-            chunk_list, batch_first=True
-        ).transpose(1, 2)
+        padded_feature = nn.utils.rnn.pad_sequence(chunk_list, batch_first=True).transpose(1, 2)
 
         # Compute feature lengths after CNN
         feature_lens_after_cnn = self._get_cnn_output_lengths(chunk_lengths)
         # Vectorized mask creation: avoid creating many small tensors
         max_len_after_cnn = feature_lens_after_cnn.max().item()
         indices = torch.arange(max_len_after_cnn, device=padded_feature.device)
-        padded_mask_after_cnn = indices.unsqueeze(0) < feature_lens_after_cnn.unsqueeze(
-            1
-        )
+        padded_mask_after_cnn = indices.unsqueeze(0) < feature_lens_after_cnn.unsqueeze(1)
 
         # Add channel dimension for conv2d
         padded_feature = padded_feature.unsqueeze(1)
@@ -440,16 +407,10 @@ class Qwen3ASRAudioEncoder(nn.Module):
 
         # (batch, channels, freq, time) -> (batch, time, channels*freq)
         b, c, f, t = padded_embed.size()
-        padded_embed = self.conv_out(
-            padded_embed.permute(0, 3, 1, 2).contiguous().view(b, t, c * f)
-        )
+        padded_embed = self.conv_out(padded_embed.permute(0, 3, 1, 2).contiguous().view(b, t, c * f))
 
         # Add positional embedding
-        positional_embedding = (
-            self.positional_embedding.positional_embedding[: padded_embed.shape[1], :]
-            .unsqueeze(0)
-            .to(padded_embed.dtype)
-        )
+        positional_embedding = self.positional_embedding.positional_embedding[: padded_embed.shape[1], :].unsqueeze(0).to(padded_embed.dtype)
         padded_embed = padded_embed + positional_embedding
 
         # Extract valid hidden states and compute cu_seqlens
@@ -457,9 +418,7 @@ class Qwen3ASRAudioEncoder(nn.Module):
 
         # Compute cumulative sequence lengths for chunked attention
         cu_chunk_lens = [0]
-        window_aftercnn = padded_mask_after_cnn.shape[-1] * (
-            self.n_window_infer // (self.n_window * 2)
-        )
+        window_aftercnn = padded_mask_after_cnn.shape[-1] * (self.n_window_infer // (self.n_window * 2))
         # Use tolist() for efficient batch conversion from tensor to Python
         for cnn_len in aftercnn_lens.tolist():
             num_full_chunks = cnn_len // window_aftercnn
@@ -467,9 +426,7 @@ class Qwen3ASRAudioEncoder(nn.Module):
             cu_chunk_lens.extend([window_aftercnn] * num_full_chunks)
             if remainder:
                 cu_chunk_lens.append(remainder)
-        cu_seqlens = torch.tensor(cu_chunk_lens, device=aftercnn_lens.device).cumsum(
-            -1, dtype=torch.int32
-        )
+        cu_seqlens = torch.tensor(cu_chunk_lens, device=aftercnn_lens.device).cumsum(-1, dtype=torch.int32)
 
         max_seqlen = self.compute_attn_mask_seqlen(cu_seqlens)
 
@@ -520,9 +477,7 @@ class Qwen3ASRAudioEncoder(nn.Module):
             else:
                 param = params_dict.get(name)
                 if param is not None:
-                    weight_loader = getattr(
-                        param, "weight_loader", default_weight_loader
-                    )
+                    weight_loader = getattr(param, "weight_loader", default_weight_loader)
                     weight_loader(param, loaded_weight)
             loaded_params.add(name)
         return loaded_params
@@ -607,9 +562,7 @@ class Qwen3ASRDummyInputsBuilder(BaseDummyInputsBuilder[Qwen3ASRProcessingInfo])
 def _qwen3asr_field_config(hf_inputs: Mapping[str, torch.Tensor]):
     audio_feature_lengths = hf_inputs.get("audio_feature_lengths", torch.empty((0,)))
     return dict(
-        input_audio_features=MultiModalFieldConfig.flat_from_sizes(
-            "audio", audio_feature_lengths, dim=1
-        ),
+        input_audio_features=MultiModalFieldConfig.flat_from_sizes("audio", audio_feature_lengths, dim=1),
         feature_attention_mask=MultiModalFieldConfig.batched("audio"),
         audio_feature_lengths=MultiModalFieldConfig.batched("audio"),
     )
@@ -664,9 +617,7 @@ class Qwen3ASRMultiModalProcessor(
             audio_output_lengths = audio_output_lens.tolist()
         elif feature_attention_mask is not None:
             assert isinstance(feature_attention_mask, torch.Tensor)
-            audio_output_lens = _get_feat_extract_output_lengths(
-                feature_attention_mask.sum(-1)
-            )
+            audio_output_lens = _get_feat_extract_output_lengths(feature_attention_mask.sum(-1))
             audio_output_lengths = audio_output_lens.tolist()
 
         def get_replacement_qwen2_audio(item_idx: int):
@@ -674,10 +625,7 @@ class Qwen3ASRMultiModalProcessor(
             if num_features == 0:
                 audios = mm_items.get_items("audio", AudioProcessorItems)
                 audio = audios.get(item_idx)
-                raise ValueError(
-                    f"The audio {audio} (len={len(audio)}) is too short "
-                    "to be represented inside the model"
-                )
+                raise ValueError(f"The audio {audio} (len={len(audio)}) is too short " "to be represented inside the model")
 
             return [audio_token_id] * num_features
 
@@ -722,9 +670,7 @@ class Qwen3ASRForConditionalGeneration(
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
         self.vllm_config = vllm_config  # needed for torch compile forward context
-        thinker_config: Qwen3ASRThinkerConfig = (
-            vllm_config.model_config.hf_config.thinker_config
-        )
+        thinker_config: Qwen3ASRThinkerConfig = vllm_config.model_config.hf_config.thinker_config
         quant_config = vllm_config.quant_config
         multimodal_config = vllm_config.model_config.multimodal_config
         self.config = thinker_config
@@ -738,19 +684,13 @@ class Qwen3ASRForConditionalGeneration(
         self.quant_config = quant_config
 
         self.language_model = Qwen3ForCausalLM(
-            vllm_config=vllm_config.with_hf_config(
-                thinker_config.text_config, architectures=["Qwen3ForCausalLM"]
-            ),
+            vllm_config=vllm_config.with_hf_config(thinker_config.text_config, architectures=["Qwen3ForCausalLM"]),
             prefix=maybe_prefix(prefix, "language_model"),
         )
 
-        self.make_empty_intermediate_tensors = (
-            self.language_model.make_empty_intermediate_tensors
-        )
+        self.make_empty_intermediate_tensors = self.language_model.make_empty_intermediate_tensors
 
-    def _parse_and_validate_audio_input(
-        self, **kwargs: object
-    ) -> Qwen2_5OmniAudioFeatureInputs | None:
+    def _parse_and_validate_audio_input(self, **kwargs: object) -> Qwen2_5OmniAudioFeatureInputs | None:
         input_audio_features = kwargs.pop("input_audio_features", None)
         audio_feature_lengths = kwargs.pop("audio_feature_lengths", None)
         feature_attention_mask = kwargs.pop("feature_attention_mask", None)
@@ -770,13 +710,8 @@ class Qwen3ASRForConditionalGeneration(
         # Preserve the order of modalities if there are multiple of them
         # from the order of kwargs.
         for input_key in kwargs:
-            if (
-                input_key in ("input_audio_features")
-                and "audio" not in mm_input_by_modality
-            ):
-                mm_input_by_modality["audio"] = self._parse_and_validate_audio_input(
-                    **kwargs
-                )
+            if input_key in ("input_audio_features") and "audio" not in mm_input_by_modality:
+                mm_input_by_modality["audio"] = self._parse_and_validate_audio_input(**kwargs)
         return mm_input_by_modality
 
     def _process_audio_input(
@@ -888,9 +823,7 @@ class Qwen3ASRForConditionalGeneration(
 
         if not mm_features:
             # No audio features, just return linear positions
-            llm_positions = (
-                torch.arange(seq_len, dtype=torch.long).view(1, -1).expand(3, -1)
-            )
+            llm_positions = torch.arange(seq_len, dtype=torch.long).view(1, -1).expand(3, -1)
             return llm_positions.clone(), 0
 
         llm_pos_ids_list: list[torch.Tensor] = []
@@ -903,25 +836,17 @@ class Qwen3ASRForConditionalGeneration(
             audio_feature_length = mm_feature.data["audio_feature_lengths"].data
             if isinstance(audio_feature_length, torch.Tensor):
                 audio_feature_length = audio_feature_length.item()
-            audio_len = _get_feat_extract_output_lengths(
-                torch.tensor(audio_feature_length)
-            ).item()
+            audio_len = _get_feat_extract_output_lengths(torch.tensor(audio_feature_length)).item()
 
             # Text segment before audio (includes audio_start token)
             text_len = offset - st
             st_idx = llm_pos_ids_list[-1].max() + 1 if llm_pos_ids_list else 0
-            text_positions = (
-                torch.arange(text_len, dtype=torch.long).view(1, -1).expand(3, -1)
-                + st_idx
-            )
+            text_positions = torch.arange(text_len, dtype=torch.long).view(1, -1).expand(3, -1) + st_idx
             llm_pos_ids_list.append(text_positions)
             st_idx = st_idx + text_len
 
             # Audio token segment
-            audio_positions = (
-                torch.arange(audio_len, dtype=torch.long).view(1, -1).expand(3, -1)
-                + st_idx
-            )
+            audio_positions = torch.arange(audio_len, dtype=torch.long).view(1, -1).expand(3, -1) + st_idx
             llm_pos_ids_list.append(audio_positions)
 
             st = offset + audio_len
@@ -930,10 +855,7 @@ class Qwen3ASRForConditionalGeneration(
         if st < seq_len:
             st_idx = llm_pos_ids_list[-1].max() + 1 if llm_pos_ids_list else 0
             text_len = seq_len - st
-            final_text_positions = (
-                torch.arange(text_len, dtype=torch.long).view(1, -1).expand(3, -1)
-                + st_idx
-            )
+            final_text_positions = torch.arange(text_len, dtype=torch.long).view(1, -1).expand(3, -1) + st_idx
             llm_pos_ids_list.append(final_text_positions)
 
         llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
@@ -953,9 +875,7 @@ class Qwen3ASRForConditionalGeneration(
         )
 
     @classmethod
-    def get_speech_to_text_config(
-        cls, model_config: ModelConfig, task_type: str
-    ) -> SpeechToTextConfig:
+    def get_speech_to_text_config(cls, model_config: ModelConfig, task_type: str) -> SpeechToTextConfig:
         processor = cached_processor_from_config(model_config)
         feature_extractor: WhisperFeatureExtractor = processor.feature_extractor
         return SpeechToTextConfig(
@@ -979,21 +899,12 @@ class Qwen3ASRForConditionalGeneration(
         audio_placeholder = cls.get_placeholder_str("audio", 0)
 
         if task_type not in ("transcribe", "translate"):
-            raise ValueError(
-                f"Unsupported task_type '{task_type}'. "
-                "Supported task types are 'transcribe' and 'translate'."
-            )
+            raise ValueError(f"Unsupported task_type '{task_type}'. " "Supported task types are 'transcribe' and 'translate'.")
         full_lang_name_to = cls.supported_languages.get(to_language, to_language)
         if to_language is None:
-            prompt = (
-                f"<|im_start|>user\n{audio_placeholder}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
+            prompt = f"<|im_start|>user\n{audio_placeholder}<|im_end|>\n" f"<|im_start|>assistant\n"
         else:
-            prompt = (
-                f"<|im_start|>user\n{audio_placeholder}<|im_end|>\n"
-                f"<|im_start|>assistant\nlanguage {full_lang_name_to}<asr_text>"
-            )
+            prompt = f"<|im_start|>user\n{audio_placeholder}<|im_end|>\n" f"<|im_start|>assistant\nlanguage {full_lang_name_to}<asr_text>"
 
         prompt_token_ids = tokenizer.encode(prompt)
         prompt_dict = {

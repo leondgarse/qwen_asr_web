@@ -34,7 +34,7 @@ from .utils import (
 )
 
 
-class Qwen3ForceAlignProcessor():
+class Qwen3ForceAlignProcessor:
     def __init__(self):
         ko_dict_path = os.path.join(os.path.dirname(__file__), "assets", "korean_dict_jieba.dict")
         ko_scores = {}
@@ -62,13 +62,13 @@ class Qwen3ForceAlignProcessor():
     def is_cjk_char(self, ch: str) -> bool:
         code = ord(ch)
         return (
-            0x4E00 <= code <= 0x9FFF   # CJK Unified Ideographs
+            0x4E00 <= code <= 0x9FFF  # CJK Unified Ideographs
             or 0x3400 <= code <= 0x4DBF  # Extension A
             or 0x20000 <= code <= 0x2A6DF  # Extension B
             or 0x2A700 <= code <= 0x2B73F  # Extension C
             or 0x2B740 <= code <= 0x2B81F  # Extension D
             or 0x2B820 <= code <= 0x2CEAF  # Extension E
-            or 0xF900 <= code <= 0xFAFF    # Compatibility Ideographs
+            or 0xF900 <= code <= 0xFAFF  # Compatibility Ideographs
         )
 
     def tokenize_chinese_mixed(self, text: str) -> List[str]:
@@ -150,16 +150,16 @@ class Qwen3ForceAlignProcessor():
 
         dp = [1] * n
         parent = [-1] * n
-        
+
         for i in range(1, n):
             for j in range(i):
                 if data[j] <= data[i] and dp[j] + 1 > dp[i]:
                     dp[i] = dp[j] + 1
                     parent[i] = j
-        
+
         max_length = max(dp)
         max_idx = dp.index(max_length)
-        
+
         lis_indices = []
         idx = max_idx
         while idx != -1:
@@ -170,31 +170,31 @@ class Qwen3ForceAlignProcessor():
         is_normal = [False] * n
         for idx in lis_indices:
             is_normal[idx] = True
-        
+
         result = data.copy()
         i = 0
-        
+
         while i < n:
             if not is_normal[i]:
                 j = i
                 while j < n and not is_normal[j]:
                     j += 1
-                
+
                 anomaly_count = j - i
-                
+
                 if anomaly_count <= 2:
                     left_val = None
                     for k in range(i - 1, -1, -1):
                         if is_normal[k]:
                             left_val = result[k]
                             break
-                    
+
                     right_val = None
                     for k in range(j, n):
                         if is_normal[k]:
                             right_val = result[k]
                             break
-                    
+
                     for k in range(i, j):
                         if left_val is None:
                             result[k] = right_val
@@ -202,7 +202,7 @@ class Qwen3ForceAlignProcessor():
                             result[k] = left_val
                         else:
                             result[k] = left_val if (k - (i - 1)) <= ((j) - k) else right_val
-                
+
                 else:
                     left_val = None
                     for k in range(i - 1, -1, -1):
@@ -215,7 +215,7 @@ class Qwen3ForceAlignProcessor():
                         if is_normal[k]:
                             right_val = result[k]
                             break
-                    
+
                     if left_val is not None and right_val is not None:
                         step = (right_val - left_val) / (anomaly_count + 1)
                         for k in range(i, j):
@@ -226,7 +226,7 @@ class Qwen3ForceAlignProcessor():
                     elif right_val is not None:
                         for k in range(i, j):
                             result[k] = right_val
-                
+
                 i = j
             else:
                 i += 1
@@ -241,11 +241,12 @@ class Qwen3ForceAlignProcessor():
         elif language.lower() == "korean":
             if self.ko_tokenizer is None:
                 from soynlp.tokenizer import LTokenizer
+
                 self.ko_tokenizer = LTokenizer(scores=self.ko_score)
             word_list = self.tokenize_korean(self.ko_tokenizer, text)
         else:
             word_list = self.tokenize_space_lang(text)
-        
+
         input_text = "<timestamp><timestamp>".join(word_list) + "<timestamp><timestamp>"
         input_text = "<|audio_start|><|audio_pad|><|audio_end|>" + input_text
 
@@ -258,12 +259,8 @@ class Qwen3ForceAlignProcessor():
         for i, word in enumerate(word_list):
             start_time = timestamp_fixed[i * 2]
             end_time = timestamp_fixed[i * 2 + 1]
-            timestamp_output.append({
-                "text": word,
-                "start_time": start_time,
-                "end_time": end_time
-            })
-        
+            timestamp_output.append({"text": word, "start_time": start_time, "end_time": end_time})
+
         return timestamp_output
 
 
@@ -280,6 +277,7 @@ class ForcedAlignItem:
         end_time (float):
             End time in seconds.
     """
+
     text: str
     start_time: int
     end_time: int
@@ -294,6 +292,7 @@ class ForcedAlignResult:
         items (List[ForcedAlignItem]):
             Aligned token spans.
     """
+
     items: List[ForcedAlignItem]
 
     def __iter__(self):
@@ -370,9 +369,7 @@ class Qwen3ForcedAligner:
 
         model = AutoModel.from_pretrained(pretrained_model_name_or_path, **kwargs)
         if not isinstance(model, Qwen3ASRForConditionalGeneration):
-            raise TypeError(
-                f"AutoModel returned {type(model)}, expected Qwen3ASRForConditionalGeneration."
-            )
+            raise TypeError(f"AutoModel returned {type(model)}, expected Qwen3ASRForConditionalGeneration.")
 
         processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, fix_mistral_regex=True)
         aligner_processor = Qwen3ForceAlignProcessor()
@@ -425,9 +422,7 @@ class Qwen3ForcedAligner:
             languages = languages * len(audios)
 
         if not (len(audios) == len(texts) == len(languages)):
-            raise ValueError(
-                f"Batch size mismatch: audio={len(audios)}, text={len(texts)}, language={len(languages)}"
-            )
+            raise ValueError(f"Batch size mismatch: audio={len(audios)}, text={len(texts)}, language={len(languages)}")
 
         word_lists = []
         aligner_input_texts = []
@@ -453,12 +448,12 @@ class Qwen3ForcedAligner:
             timestamp_ms = (masked_output_id * self.timestamp_segment_time).to("cpu").numpy()
             timestamp_output = self.aligner_processor.parse_timestamp(word_list, timestamp_ms)
             for it in timestamp_output:
-                it['start_time'] = round(it['start_time'] / 1000.0, 3)
-                it['end_time'] = round(it['end_time'] / 1000.0, 3)
+                it["start_time"] = round(it["start_time"] / 1000.0, 3)
+                it["end_time"] = round(it["end_time"] / 1000.0, 3)
             results.append(self._to_structured_items(timestamp_output))
 
         return results
-    
+
     def get_supported_languages(self) -> Optional[List[str]]:
         """
         List supported language names for the current model.

@@ -36,21 +36,22 @@ from transformers.modeling_outputs import (
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 
 if "default" not in ROPE_INIT_FUNCTIONS:
+
     def _compute_default_rope_parameters(config, device=None, seq_len=None, **kwargs):
         if hasattr(config, "standardize_rope_params"):
             config.standardize_rope_params()
-        
+
         rope_params = getattr(config, "rope_parameters", {})
         if isinstance(rope_params, dict) and "full_attention" in rope_params:
             rope_params = rope_params["full_attention"]
 
         base = rope_params.get("rope_theta", getattr(config, "rope_theta", 10000.0))
         partial_rotary_factor = rope_params.get("partial_rotary_factor", getattr(config, "partial_rotary_factor", 1.0))
-        
+
         head_dim = getattr(config, "head_dim", None)
         if head_dim is None:
             head_dim = config.hidden_size // config.num_attention_heads
-        
+
         dim = int(head_dim * partial_rotary_factor)
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float) / dim))
         return inv_freq, 1.0
@@ -176,24 +177,12 @@ class Qwen3ASRTextAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
 
-        self.q_proj = nn.Linear(
-            config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.k_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.v_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.o_proj = nn.Linear(
-            config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
-        )
-        self.q_norm = Qwen3ASRTextRMSNorm(
-            self.head_dim, eps=config.rms_norm_eps
-        )  # unlike olmo, only on the head dim!
-        self.k_norm = Qwen3ASRTextRMSNorm(
-            self.head_dim, eps=config.rms_norm_eps
-        )  # thus post q_norm does not need reshape
+        self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias)
+        self.q_norm = Qwen3ASRTextRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # unlike olmo, only on the head dim!
+        self.k_norm = Qwen3ASRTextRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # thus post q_norm does not need reshape
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
@@ -378,9 +367,7 @@ class Qwen3ASRPreTrainedModelForConditionalGeneration(Qwen3ASRPreTrainedModel):
             # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
             causal_mask = attention_mask
         else:
-            causal_mask = torch.full(
-                (sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device
-            )
+            causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
             if sequence_length != 1:
                 causal_mask = torch.triu(causal_mask, diagonal=1)
             causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
@@ -390,16 +377,11 @@ class Qwen3ASRPreTrainedModelForConditionalGeneration(Qwen3ASRPreTrainedModel):
                 mask_length = attention_mask.shape[-1]
                 padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
                 padding_mask = padding_mask == 0
-                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-                    padding_mask, min_dtype
-                )
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(padding_mask, min_dtype)
 
         return causal_mask
 
-
-    def get_chunked_index(
-        self, token_indices: torch.Tensor, tokens_per_chunk: int, remove_index: int
-    ) -> list[tuple[int, int]]:
+    def get_chunked_index(self, token_indices: torch.Tensor, tokens_per_chunk: int, remove_index: int) -> list[tuple[int, int]]:
         """
         Splits token index list into chunks based on token value ranges.
 
@@ -484,10 +466,7 @@ class Qwen3ASRAudioAttention(nn.Module):
         self.config = config
 
         if (self.head_dim * self.num_heads) != self.embed_dim:
-            raise ValueError(
-                f"embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+            raise ValueError(f"embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim}" f" and `num_heads`: {self.num_heads}).")
         self.scaling = self.head_dim**-0.5
         self.attention_dropout = 0.0
         self.is_decoder = False
@@ -732,11 +711,7 @@ class Qwen3ASRAudioEncoder(Qwen3ASRPreTrainedModel):
         b, c, f, t = padded_embed.size()
         padded_embed = self.conv_out(padded_embed.permute(0, 3, 1, 2).contiguous().view(b, t, c * f))
 
-        positional_embedding = (
-            self.positional_embedding.positional_embedding[: padded_embed.shape[1], :]
-            .unsqueeze(0)
-            .to(padded_embed.dtype)
-        )
+        positional_embedding = self.positional_embedding.positional_embedding[: padded_embed.shape[1], :].unsqueeze(0).to(padded_embed.dtype)
         padded_embed = padded_embed + positional_embedding
         hidden_states = padded_embed[padded_mask_after_cnn]
         cu_chunk_lens = [0]
@@ -910,24 +885,12 @@ class Qwen3ASRThinkerTextAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
 
-        self.q_proj = nn.Linear(
-            config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.k_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.v_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.o_proj = nn.Linear(
-            config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
-        )
-        self.q_norm = Qwen3ASRThinkerTextRMSNorm(
-            self.head_dim, eps=config.rms_norm_eps
-        )  # unlike olmo, only on the head dim!
-        self.k_norm = Qwen3ASRThinkerTextRMSNorm(
-            self.head_dim, eps=config.rms_norm_eps
-        )  # thus post q_norm does not need reshape
+        self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias)
+        self.q_norm = Qwen3ASRThinkerTextRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # unlike olmo, only on the head dim!
+        self.k_norm = Qwen3ASRThinkerTextRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # thus post q_norm does not need reshape
         self.sliding_window = None
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
@@ -976,11 +939,7 @@ class Qwen3ASRThinkerTextAttention(nn.Module):
         return attn_output, attn_weights
 
 
-@auto_docstring(
-    custom_intro=(
-        "Text part of Qwen3ASRThinker, "
-    )
-)
+@auto_docstring(custom_intro=("Text part of Qwen3ASRThinker, "))
 class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
     config: Qwen3ASRConfig
     _no_split_modules = ["Qwen3ASRThinkerTextDecoderLayer"]
@@ -996,9 +955,7 @@ class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList(
-            [Qwen3ASRThinkerTextDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
-        )
+        self.layers = nn.ModuleList([Qwen3ASRThinkerTextDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
         self.norm = Qwen3ASRTextRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen3ASRThinkerTextRotaryEmbedding(config)
         self.gradient_checkpointing = False
@@ -1031,9 +988,7 @@ class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+            cache_position = torch.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device)
 
         # the hard coded `3` is for temporal, height and width.
         if position_ids is None:
@@ -1143,7 +1098,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
         else:
             audio_feature_lengths = None
         feature_lens = audio_feature_lengths if audio_feature_lengths is not None else feature_attention_mask.sum(-1)
-    
+
         # audio encoder do not support batch inference to keep precision
         audio_features = []
         for input_feature, feature_len in zip(input_features, feature_lens):
@@ -1168,10 +1123,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
         """
         if input_ids is None:
             special_audio_mask = (
-                inputs_embeds
-                == self.get_input_embeddings()(
-                    torch.tensor(self.config.audio_token_id, dtype=torch.long, device=inputs_embeds.device)
-                )
+                inputs_embeds == self.get_input_embeddings()(torch.tensor(self.config.audio_token_id, dtype=torch.long, device=inputs_embeds.device))
             ).all(-1)
         else:
             special_audio_mask = input_ids == self.config.audio_token_id
@@ -1233,11 +1185,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
             audio_feature_lengths = None
 
         if attention_mask is not None and position_ids is None:
-            if (
-                cache_position is None
-                or (cache_position is not None and cache_position[0] == 0)
-                or self.rope_deltas is None
-            ):
+            if cache_position is None or (cache_position is not None and cache_position[0] == 0) or self.rope_deltas is None:
                 delta0 = (1 - attention_mask).sum(dim=-1).unsqueeze(1)
                 position_ids, rope_deltas = self.get_rope_index(
                     attention_mask,
@@ -1267,9 +1215,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
 
         loss = None
         if labels is not None:
-            loss = self.loss_function(
-                logits=logits, labels=labels, vocab_size=self.config.get_text_config().vocab_size
-            )
+            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.get_text_config().vocab_size)
 
         return Qwen3ASRThinkerCausalLMOutputWithPast(
             loss=loss,
@@ -1342,7 +1288,7 @@ class Qwen3ASRForConditionalGeneration(Qwen3ASRPreTrainedModel, GenerationMixin)
 
         self.thinker = Qwen3ASRThinkerForConditionalGeneration._from_config(config.thinker_config)
         self.post_init()
-    
+
     def get_support_languages(self):
         return self.config.support_languages
 
