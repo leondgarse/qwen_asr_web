@@ -331,7 +331,7 @@ async def process_file(file_path: str, endpoint: str, context: str = "", output:
 async def main():
     parser = argparse.ArgumentParser(description="Qwen3-ASR File Streaming Transcriber with Vocal Extraction, VAD & Context")
     parser.add_argument("audio", help="Path to input audio file (.mp3, .wav, .m4a, ...)")
-    parser.add_argument("-e", "--endpoint", default="ws://localhost:8002/transcribe-streaming", help="WebSocket Endpoint URL")
+    parser.add_argument("-e", "--endpoint", default="ws://localhost:8000/transcribe-streaming", help="WebSocket Endpoint URL")
     parser.add_argument("-l", "--language", default="English", help="Forced language full name (e.g. English, Chinese, Japanese)")
     parser.add_argument("-o", "--output", default=None, help="Output JSONL file path (default: <audio_stem>.jsonl)")
     parser.add_argument("--context", default=None, help="Path to PDF or Markdown reference document for vocabulary context")

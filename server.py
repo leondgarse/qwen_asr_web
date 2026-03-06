@@ -127,8 +127,8 @@ def load_models():
             model=model_name,
             gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", "0.75")),
             max_new_tokens=int(os.getenv("MAX_NEW_TOKENS", "8192")),
-            max_model_len=int(os.getenv("MAX_MODEL_LEN", "32768")),
-            max_num_batched_tokens=int(os.getenv("MAX_MODEL_LEN", "32768")),
+            max_model_len=int(os.getenv("MAX_MODEL_LEN", "4096")),
+            max_num_batched_tokens=int(os.getenv("MAX_MODEL_LEN", "4096")),
             enforce_eager=True,
             trust_remote_code=True,
         )
