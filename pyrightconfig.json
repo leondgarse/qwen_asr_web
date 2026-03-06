@@ -1,0 +1,10 @@
+{
+    "exclude": [
+        "*.gguf",
+        "*.mp4",
+        "*.pdf",
+        "*.safetensors",
+        "*/*.safetensors",
+        "workspace"
+    ]
+}

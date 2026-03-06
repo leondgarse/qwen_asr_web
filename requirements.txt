@@ -1,0 +1,32 @@
+# ── Server ────────────────────────────────────────────────────────────────────
+fastapi>=0.115
+uvicorn>=0.30
+psutil>=6.0
+
+# ── Audio I/O & processing ────────────────────────────────────────────────────
+torch>=2.0
+torchaudio>=2.0
+soundfile>=0.12
+sounddevice>=0.4
+scipy>=1.10
+numpy>=1.24
+
+# ── Vocal separation (client_file.py --vocal-extraction) ─────────────────────
+# NOTE: torchaudio 2.9.x requires torchcodec which needs FFmpeg shared libs
+# not available on this system. demucs_runner.py patches torchaudio.save to
+# use soundfile instead — do NOT install torchcodec.
+demucs>=4.0
+
+# ── Streaming client ──────────────────────────────────────────────────────────
+websockets>=12.0
+webrtcvad>=2.0
+
+# ── Context extraction ────────────────────────────────────────────────────────
+pypdf>=4.0
+tqdm>=4.60
+
+# ── process_video.py ─────────────────────────────────────────────────────────
+requests>=2.28
+
+# ── System dependency (not pip-installable) ───────────────────────────────────
+# ffmpeg >= 4.x  →  sudo apt install ffmpeg

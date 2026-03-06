@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3-ASR Studio</title>
+<style>
+:root {
+  --bg:     #0d1117;
+  --bg2:    #161b22;
+  --bg3:    #21262d;
+  --border: #30363d;
+  --text:   #c9d1d9;
+  --muted:  #8b949e;
+  --accent: #58a6ff;
+  --green:  #3fb950;
+  --red:    #f85149;
+  --yellow: #d29922;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
+       background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+
+#app  { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
+#main { display: flex; overflow: hidden; min-width: 0; }
+
+/* ── Sidebar ── */
+#sidebar { background: var(--bg2); border-right: 1px solid var(--border);
+           display: flex; flex-direction: column; overflow: hidden; }
+#sidebar-hd { display: flex; align-items: center; justify-content: space-between;
+              padding: 14px 12px; border-bottom: 1px solid var(--border);
+              font-weight: 600; font-size: 13px; color: var(--muted); letter-spacing: .05em; }
+#sidebar-hd span { text-transform: uppercase; }
+#new-btn { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+           padding: 3px 10px; cursor: pointer; font-size: 18px; line-height: 1;
+           transition: opacity .15s; }
+#new-btn:hover { opacity: .8; }
+#sessions-list { flex: 1; overflow-y: auto; padding: 6px; }
+.session-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+                border-radius: 8px; cursor: pointer; transition: background .15s;
+                border: 1px solid transparent; }
+.session-item:hover { background: var(--bg3); }
+.session-item.active { background: var(--bg3); border-color: var(--accent); }
+.session-name { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-name[contenteditable="true"] { outline: 1px solid var(--accent); border-radius: 3px; padding: 0 3px; }
+.session-del { opacity: 0; background: none; border: none; color: var(--red);
+               cursor: pointer; font-size: 15px; padding: 0 2px; line-height: 1; }
+.session-item:hover .session-del { opacity: 1; }
+.session-meta { font-size: 11px; color: var(--muted); }
+
+/* ── Resizer ── */
+#resizer { width: 5px; flex-shrink: 0; cursor: col-resize; background: var(--border); transition: background .15s; }
+#resizer:hover, #resizer.active { background: var(--accent); }
+
+/* ── Chat ── */
+#chat { flex: 1; min-width: 300px; display: flex; flex-direction: column; overflow: hidden; }
+#chat-hd { padding: 14px 18px; border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; gap: 10px; background: var(--bg2); }
+#chat-hd h2 { font-size: 15px; font-weight: 600; flex: 1; }
+#model-select { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+                border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+#model-select:focus { outline: none; border-color: var(--accent); }
+#messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.msg { max-width: 85%; }
+.msg.user { align-self: flex-end; }
+.msg.assistant { align-self: flex-start; }
+.msg-bubble { padding: 10px 14px; border-radius: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.msg.user .msg-bubble { background: var(--accent); color: #fff; border-radius: 12px 12px 2px 12px; }
+.msg.assistant .msg-bubble { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px 12px 12px 2px; }
+.msg-time { font-size: 11px; color: var(--muted); margin-top: 4px; text-align: right; }
+.msg.assistant .msg-time { text-align: left; }
+#no-session { color: var(--muted); text-align: center; margin: auto; }
+#chat-input-area { display: flex; gap: 8px; padding: 12px 18px;
+                   border-top: 1px solid var(--border); background: var(--bg2); }
+#chat-input { flex: 1; background: var(--bg3); border: 1px solid var(--border);
+              border-radius: 10px; color: var(--text); padding: 9px 14px; resize: none;
+              font-family: inherit; font-size: 14px; line-height: 1.4; min-height: 42px; max-height: 140px; }
+#chat-input:focus { outline: none; border-color: var(--accent); }
+#send-btn { background: var(--accent); color: #fff; border: none; border-radius: 10px;
+            padding: 0 18px; cursor: pointer; font-size: 14px; transition: opacity .15s; }
+#send-btn:hover { opacity: .85; }
+#send-btn:disabled { opacity: .4; cursor: default; }
+
+/* ── Transcription panel ── */
+#transcription { background: var(--bg2); flex-shrink: 0; width: 480px; min-width: 280px;
+                 display: flex; flex-direction: column; overflow: hidden; }
+#tr-hd { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+#tr-hd-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+#tr-hd-row h3 { font-size: 13px; font-weight: 600; color: var(--muted);
+                text-transform: uppercase; letter-spacing: .05em; flex: 1; }
+
+/* Settings */
+#settings-btn { background: none; border: none; color: var(--muted); cursor: pointer;
+                font-size: 16px; padding: 2px 4px; border-radius: 4px; line-height: 1;
+                transition: color .15s; }
+#settings-btn:hover { color: var(--text); }
+#settings-panel { display: none; background: var(--bg3); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+#settings-panel.open { display: block; }
+#settings-panel label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+#srv-row { display: flex; align-items: center; gap: 6px; }
+#srv-host { flex: 1; background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+            border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+#srv-port { width: 70px; background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+            border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+#srv-host:focus, #srv-port:focus { outline: none; border-color: var(--accent); }
+#srv-apply { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+             padding: 5px 12px; cursor: pointer; font-size: 13px; }
+#srv-apply:hover { opacity: .85; }
+#srv-current { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+#lang-row { display: flex; align-items: center; gap: 8px; }
+#lang-select { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+               border-radius: 6px; padding: 4px 8px; font-size: 13px; flex: 1; }
+
+/* Mic button */
+#mic-area { padding: 14px; border-bottom: 1px solid var(--border); }
+#mic-btn { width: 100%; padding: 11px; border-radius: 10px; border: none; cursor: pointer;
+           font-size: 15px; font-weight: 600; display: flex; align-items: center;
+           justify-content: center; gap: 8px; transition: all .2s; }
+#mic-btn.idle    { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+#mic-btn.idle:hover { border-color: var(--accent); color: var(--accent); }
+#mic-btn.active  { background: var(--red); color: #fff; }
+#mic-btn.active:hover { opacity: .85; }
+#mic-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+#mic-btn.active #mic-dot { animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+#rec-status { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; min-height: 16px; }
+
+/* Context upload */
+#ctx-area { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+#ctx-area label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+#ctx-file-input { display: none; }
+#ctx-pick-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+                border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+#ctx-pick-btn:hover { border-color: var(--accent); }
+#ctx-info { font-size: 11px; color: var(--muted); margin-top: 5px; min-height: 16px; }
+#ctx-clear { display: none; background: none; border: none; color: var(--red); cursor: pointer; font-size: 11px; }
+
+/* Transcription output */
+#tr-output { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.tr-entry { background: var(--bg3); border-radius: 8px; padding: 8px 10px;
+            border-left: 3px solid var(--accent); }
+.tr-ts  { font-size: 11px; color: var(--muted); margin-bottom: 3px; font-variant-numeric: tabular-nums; }
+.tr-txt { line-height: 1.5; }
+#partial-entry { background: var(--bg3); border-radius: 8px; padding: 8px 10px;
+                 border-left: 3px solid var(--yellow); opacity: .7; display: none; }
+#partial-entry .tr-txt { font-style: italic; }
+#tr-empty { color: var(--muted); font-size: 13px; text-align: center; margin: auto; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Left: Sessions ── -->
+  <aside id="sidebar">
+    <div id="sidebar-hd">
+      <span>Sessions</span>
+      <button id="new-btn" title="New session">+</button>
+    </div>
+    <div id="sessions-list"></div>
+  </aside>
+
+  <div id="main">
+  <!-- ── Middle: Chat ── -->
+  <main id="chat">
+    <div id="chat-hd">
+      <h2 id="chat-title">—</h2>
+      <select id="model-select"><option value="auto">Loading models…</option></select>
+    </div>
+    <div id="messages"><div id="no-session">Select or create a session to begin.</div></div>
+    <div id="chat-input-area">
+      <textarea id="chat-input" rows="1" placeholder="Ask about the transcription… (Enter to send)"></textarea>
+      <button id="send-btn" disabled>Send</button>
+    </div>
+  </main>
+
+  <div id="resizer"></div>
+
+  <!-- ── Right: Transcription ── -->
+  <section id="transcription">
+    <div id="tr-hd">
+      <div id="tr-hd-row">
+        <h3>Live Transcription</h3>
+        <button id="settings-btn" title="Server settings">⚙</button>
+      </div>
+
+      <!-- Settings panel -->
+      <div id="settings-panel">
+        <label>ASR Server (host : port)</label>
+        <div id="srv-row">
+          <input id="srv-host" placeholder="localhost" spellcheck="false">
+          <span style="color:var(--muted)">:</span>
+          <input id="srv-port" placeholder="8000" spellcheck="false">
+          <button id="srv-apply">Apply</button>
+        </div>
+        <div id="srv-current"></div>
+      </div>
+
+      <div id="lang-row">
+        <select id="lang-select">
+          <option value="English">English</option>
+          <option value="Chinese">Chinese</option>
+          <option value="Japanese">Japanese</option>
+          <option value="Korean">Korean</option>
+          <option value="German">German</option>
+          <option value="French">French</option>
+          <option value="Spanish">Spanish</option>
+          <option value="">Auto-detect</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="mic-area">
+      <button id="mic-btn" class="idle">
+        <span id="mic-dot"></span>
+        <span id="mic-label">Start Recording</span>
+      </button>
+      <div id="rec-status">Idle</div>
+    </div>
+
+    <div id="ctx-area">
+      <label>Context file (vocab hint)</label>
+      <button id="ctx-pick-btn">📎 Upload PDF / MD / TXT</button>
+      <input type="file" id="ctx-file-input" accept=".pdf,.md,.markdown,.txt">
+      <div id="ctx-info"></div>
+      <button id="ctx-clear">✕ Clear context</button>
+    </div>
+
+    <div id="tr-output">
+      <div id="tr-empty">No transcription yet.</div>
+      <div id="partial-entry"><div class="tr-txt" id="partial-txt"></div></div>
+    </div>
+  </section>
+  </div><!-- #main -->
+
+</div>
+<script>
+// ═══════════════════════════════════════════════════════════
+// Server config (persisted to localStorage)
+// ═══════════════════════════════════════════════════════════
+function getServerBase() {
+  const host = localStorage.getItem('asr_host') || 'localhost';
+  const port = localStorage.getItem('asr_port') || '8000';
+  return { host, port };
+}
+function asrWsUrl()   { const {host,port} = getServerBase(); return `ws://${host}:${port}/transcribe-streaming`; }
+function asrHttpUrl() { const {host,port} = getServerBase(); return `http://${host}:${port}`; }
+
+// Settings panel
+document.getElementById('settings-btn').addEventListener('click', () => {
+  const panel = document.getElementById('settings-panel');
+  const {host, port} = getServerBase();
+  document.getElementById('srv-host').value = host;
+  document.getElementById('srv-port').value = port;
+  updateSrvLabel();
+  panel.classList.toggle('open');
+});
+
+function updateSrvLabel() {
+  const {host,port} = getServerBase();
+  document.getElementById('srv-current').textContent = `Current: ${host}:${port}`;
+}
+
+document.getElementById('srv-apply').addEventListener('click', () => {
+  const host = document.getElementById('srv-host').value.trim() || 'localhost';
+  const port = document.getElementById('srv-port').value.trim() || '8000';
+  localStorage.setItem('asr_host', host);
+  localStorage.setItem('asr_port', port);
+  updateSrvLabel();
+  document.getElementById('settings-panel').classList.remove('open');
+});
+
+// ═══════════════════════════════════════════════════════════
+// Audio / VAD constants
+// ═══════════════════════════════════════════════════════════
+const TARGET_SR        = 16000;
+const FRAME_SAMPLES    = 480;       // 30 ms @ 16 kHz
+const SPEECH_TRIGGER   = 5;         // consecutive speech frames to start
+const SILENCE_TRIGGER  = 33;        // consecutive silence frames to end (~1 s)
+const MAX_UTT_FRAMES   = 2000;      // force-flush after ~60 s
+const ENERGY_THRESHOLD = 0.018;     // RMS; tune for your mic / room
+
+// ═══════════════════════════════════════════════════════════
+// App state
+// ═══════════════════════════════════════════════════════════
+let sessions    = JSON.parse(localStorage.getItem('asr_sessions') || '[]');
+let currentId   = null;
+let contextText = '';
+
+// Recording
+let mediaStream  = null;
+let audioCtx     = null;
+let processor    = null;
+let isRecording  = false;
+let speechChunks = [];
+let isSpeaking   = false;
+let speechCount  = 0;
+let silenceCount = 0;
+
+// Serial transcription queue
+let txQueue = Promise.resolve();
+
+// ═══════════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════════
+function uid()    { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function fmtTime(d=new Date()) { return d.toTimeString().slice(0,8); }
+function esc(s)   { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function rms(f32) {
+  let s = 0;
+  for (let i = 0; i < f32.length; i++) s += f32[i]*f32[i];
+  return Math.sqrt(s / f32.length);
+}
+function float32ToInt16Buffer(f32) {
+  const i16 = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++)
+    i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i]*32768)));
+  return i16.buffer;
+}
+function resampleTo16k(input, fromSR) {
+  if (fromSR === TARGET_SR) return input;
+  const ratio = fromSR / TARGET_SR;
+  const out = new Float32Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i++) {
+    const src = i * ratio, idx = Math.floor(src), frac = src - idx;
+    out[i] = idx+1 < input.length ? input[idx]*(1-frac) + input[idx+1]*frac : input[idx];
+  }
+  return out;
+}
+function scrollBottom(el) { el.scrollTop = el.scrollHeight; }
+
+// ═══════════════════════════════════════════════════════════
+// Session management
+// ═══════════════════════════════════════════════════════════
+function saveState() { localStorage.setItem('asr_sessions', JSON.stringify(sessions)); }
+function getSession(id=currentId) { return sessions.find(s=>s.id===id)||null; }
+
+function createSession() {
+  const s = { id:uid(), name:`Session ${sessions.length+1}`, messages:[], transcription:[], createdAt:Date.now() };
+  sessions.unshift(s);
+  saveState();
+  switchSession(s.id);
+  renderSessions();
+}
+function deleteSession(id) {
+  sessions = sessions.filter(s=>s.id!==id);
+  saveState();
+  if (currentId===id) {
+    currentId = null;
+    if (sessions.length) switchSession(sessions[0].id);
+    else { renderChat(); renderTranscriptionPanel(); }
+  }
+  renderSessions();
+}
+function switchSession(id) {
+  currentId = id;
+  renderSessions();
+  renderChat();
+  renderTranscriptionPanel();
+  document.getElementById('send-btn').disabled = false;
+}
+function renderSessions() {
+  document.getElementById('sessions-list').innerHTML = sessions.map(s=>`
+    <div class="session-item ${s.id===currentId?'active':''}" onclick="switchSession('${s.id}')">
+      <div style="flex:1;min-width:0">
+        <div class="session-name" ondblclick="renameSession(this,'${s.id}')">${esc(s.name)}</div>
+        <div class="session-meta">${s.transcription.length} segments</div>
+      </div>
+      <button class="session-del" onclick="event.stopPropagation();deleteSession('${s.id}')">✕</button>
+    </div>`).join('');
+}
+function renameSession(el, id) {
+  el.contentEditable='true'; el.focus();
+  window.getSelection().selectAllChildren(el);
+  el.onblur = () => {
+    el.contentEditable='false';
+    const s=getSession(id); if(s){ s.name=el.textContent.trim()||s.name; saveState(); }
+    renderSessions();
+  };
+  el.onkeydown = e => { if(e.key==='Enter'){e.preventDefault();el.blur();} };
+}
+
+// ═══════════════════════════════════════════════════════════
+// Chat
+// ═══════════════════════════════════════════════════════════
+function getTranscriptionText(id=currentId) {
+  const s=getSession(id);
+  return s ? s.transcription.map(e=>`[${e.time}] ${e.text}`).join('\n') : '';
+}
+function renderChat() {
+  const s=getSession();
+  document.getElementById('chat-title').textContent = s ? s.name : '—';
+  const box=document.getElementById('messages');
+  if (!s || !s.messages.length) {
+    box.innerHTML='<div id="no-session" style="color:var(--muted);margin:auto;text-align:center">No messages yet.<br>Ask a question about the transcription.</div>';
+    return;
+  }
+  box.innerHTML = s.messages.map(m=>`
+    <div class="msg ${m.role}">
+      <div class="msg-bubble">${esc(m.content)}</div>
+      <div class="msg-time">${m.time||''}</div>
+    </div>`).join('');
+  scrollBottom(box);
+}
+
+async function sendChatMessage() {
+  const s=getSession(); if(!s) return;
+  const inp=document.getElementById('chat-input');
+  const text=inp.value.trim(); if(!text) return;
+
+  s.messages.push({role:'user', content:text, time:fmtTime()});
+  inp.value=''; inp.style.height='';
+  saveState(); renderChat();
+
+  const btn=document.getElementById('send-btn');
+  btn.disabled=true;
+
+  const asstMsg={role:'assistant', content:'', time:fmtTime()};
+  s.messages.push(asstMsg);
+  renderChat();
+
+  try {
+    const selectedModel = document.getElementById('model-select').value;
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        messages: s.messages.slice(0,-1).map(m=>({role:m.role, content:m.content})),
+        transcription: getTranscriptionText(),
+        context: contextText,
+        model: selectedModel,
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({detail:resp.statusText}));
+      asstMsg.content = `⚠ ${err.detail||resp.statusText}`;
+      saveState(); renderChat(); return;
+    }
+
+    const reader=resp.body.getReader(), dec=new TextDecoder();
+    const box=document.getElementById('messages');
+    while (true) {
+      const {done,value}=await reader.read(); if(done) break;
+      for (const line of dec.decode(value).split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const payload=line.slice(6); if(payload==='[DONE]') break;
+        try { const d=JSON.parse(payload); if(d.text) asstMsg.content+=d.text; } catch {}
+      }
+      renderChat(); scrollBottom(box);
+    }
+  } catch(e) {
+    asstMsg.content=`⚠ Network error calling /api/chat\n${e.message}\n\nIs web_server.py running?`;
+    renderChat();
+  } finally {
+    saveState(); btn.disabled=false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Transcription panel
+// ═══════════════════════════════════════════════════════════
+function renderTranscriptionPanel() {
+  const s=getSession();
+  const out=document.getElementById('tr-output');
+  const empty=document.getElementById('tr-empty');
+  out.querySelectorAll('.tr-entry').forEach(el=>el.remove());
+  if (!s||!s.transcription.length) { empty.style.display='block'; return; }
+  empty.style.display='none';
+  const partial=document.getElementById('partial-entry');
+  s.transcription.forEach(entry=>{
+    const div=document.createElement('div');
+    div.className='tr-entry';
+    div.innerHTML=`<div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`;
+    out.insertBefore(div,partial);
+  });
+  scrollBottom(out);
+}
+function appendTranscription(text) {
+  const s=getSession(); if(!s||!text.trim()) return;
+  const entry={time:fmtTime(), text:text.trim()};
+  s.transcription.push(entry); saveState();
+  document.getElementById('tr-empty').style.display='none';
+  const out=document.getElementById('tr-output');
+  const partial=document.getElementById('partial-entry');
+  const div=document.createElement('div');
+  div.className='tr-entry';
+  div.innerHTML=`<div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`;
+  out.insertBefore(div,partial);
+  scrollBottom(out);
+  renderSessions();
+}
+function setPartial(text) {
+  const el=document.getElementById('partial-entry');
+  const txt=document.getElementById('partial-txt');
+  if (text) { txt.textContent=text; el.style.display='block'; scrollBottom(document.getElementById('tr-output')); }
+  else       { el.style.display='none'; txt.textContent=''; }
+}
+function setRecStatus(msg) { document.getElementById('rec-status').textContent=msg; }
+
+// ═══════════════════════════════════════════════════════════
+// Context upload
+// ═══════════════════════════════════════════════════════════
+document.getElementById('ctx-file-input').addEventListener('change', async (e) => {
+  const file=e.target.files[0]; if(!file) return;
+  const info=document.getElementById('ctx-info');
+  info.textContent='Reading…';
+  const ext=file.name.split('.').pop().toLowerCase();
+
+  if (ext==='md'||ext==='markdown'||ext==='txt') {
+    contextText=(await file.text()).slice(0,4000);
+    info.textContent=`✓ ${file.name} (${contextText.length} chars)`;
+    document.getElementById('ctx-clear').style.display='inline';
+    return;
+  }
+  if (ext==='pdf') {
+    // Try web_server.py for PDF parsing
+    try {
+      const form=new FormData(); form.append('file',file);
+      const resp=await fetch('/api/extract-context',{method:'POST',body:form});
+      if (!resp.ok) throw new Error((await resp.json().catch(()=>({}))).detail||resp.statusText);
+      const data=await resp.json();
+      contextText=data.text;
+      info.textContent=`✓ ${file.name} (${data.chars} chars)`;
+      document.getElementById('ctx-clear').style.display='inline';
+    } catch(err) {
+      info.textContent=`✗ PDF requires web_server.py: ${err.message}`;
+    }
+    e.target.value=''; return;
+  }
+  info.textContent='✗ Unsupported file type';
+  e.target.value='';
+});
+document.getElementById('ctx-clear').addEventListener('click', () => {
+  contextText='';
+  document.getElementById('ctx-info').textContent='';
+  document.getElementById('ctx-clear').style.display='none';
+  document.getElementById('ctx-file-input').value='';
+});
+document.getElementById('ctx-pick-btn').addEventListener('click', () =>
+  document.getElementById('ctx-file-input').click());
+
+// ═══════════════════════════════════════════════════════════
+// VAD
+// ═══════════════════════════════════════════════════════════
+function processVADFrame(frame) {
+  const speech = rms(frame) > ENERGY_THRESHOLD;
+  if (!isSpeaking) {
+    if (speech) {
+      if (++speechCount >= SPEECH_TRIGGER) {
+        isSpeaking=true; speechCount=0; silenceCount=0;
+        speechChunks=[new Float32Array(frame)];
+        setRecStatus('Speaking…');
+      }
+    } else { speechCount=0; setRecStatus('Listening…'); }
+  } else {
+    speechChunks.push(new Float32Array(frame));
+    if (!speech) {
+      if (++silenceCount >= SILENCE_TRIGGER) flushUtterance();
+    } else { silenceCount=0; }
+    if (isSpeaking && speechChunks.length >= MAX_UTT_FRAMES) flushUtterance();
+  }
+}
+
+function flushUtterance() {
+  const tail  = Math.floor(SILENCE_TRIGGER / 2);
+  const keep  = Math.max(SPEECH_TRIGGER, speechChunks.length - silenceCount + tail);
+  const chunks = speechChunks.slice(0, keep);
+  isSpeaking=false; speechChunks=[]; silenceCount=0; speechCount=0;
+  setPartial(''); setRecStatus(isRecording ? 'Transcribing…' : 'Idle');
+
+  const total = chunks.reduce((s,c)=>s+c.length, 0);
+  if (total < SPEECH_TRIGGER * FRAME_SAMPLES) { setRecStatus(isRecording?'Listening…':'Idle'); return; }
+
+  const merged=new Float32Array(total);
+  let off=0; for(const c of chunks){merged.set(c,off);off+=c.length;}
+  const buf=float32ToInt16Buffer(merged);
+  txQueue=txQueue.then(()=>doTranscribe(buf)).catch(console.error);
+}
+
+async function doTranscribe(int16Buf) {
+  const lang=document.getElementById('lang-select').value;
+  const wsUrl=lang ? `${asrWsUrl()}?language=${encodeURIComponent(lang)}` : asrWsUrl();
+
+  return new Promise(resolve=>{
+    let done=false;
+    const finish=(text)=>{
+      if(done) return; done=true;
+      setPartial('');
+      if(text) appendTranscription(text);
+      setRecStatus(isRecording?'Listening…':'Idle');
+      resolve();
+    };
+
+    let ws;
+    try { ws=new WebSocket(wsUrl); } catch(e){ console.error(e); finish(''); return; }
+    ws.binaryType='arraybuffer';
+
+    ws.onopen=()=>{
+      ws.send(JSON.stringify({
+        type:'start', format:'pcm_s16le', sample_rate_hz:TARGET_SR, channels:1,
+        context: contextText
+          ? `Reference only — do NOT transcribe this. Vocabulary hint: ${contextText.slice(0,600)}`
+          : '',
+      }));
+      const CHUNK=1600*2;
+      for(let i=0;i<int16Buf.byteLength;i+=CHUNK)
+        ws.send(int16Buf.slice(i, Math.min(i+CHUNK,int16Buf.byteLength)));
+      ws.send(JSON.stringify({type:'stop'}));
+    };
+    ws.onmessage=e=>{
+      try {
+        const msg=JSON.parse(e.data);
+        if(msg.type==='partial') setPartial(msg.text);
+        else if(msg.type==='final'){ws.close();finish(msg.text);}
+        else if(msg.type==='error'){ws.close();finish('');}
+      } catch {}
+    };
+    ws.onclose=()=>finish('');
+    ws.onerror=()=>finish('');
+    setTimeout(()=>{try{ws.close();}catch{}finish('');},30000);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// Microphone
+// ═══════════════════════════════════════════════════════════
+async function startRecording() {
+  if (!getSession()) createSession();
+
+  // navigator.mediaDevices is only available in secure contexts (HTTPS or localhost).
+  // Accessing via an IP address over plain HTTP will make it undefined.
+  if (!navigator.mediaDevices?.getUserMedia) {
+    const isLocalhost = ['localhost','127.0.0.1','::1'].includes(location.hostname);
+    const msg = isLocalhost
+      ? 'Your browser denied microphone access. Check browser permissions.'
+      : `Microphone requires a secure context.\n\nOpen this page via http://localhost:8001 instead of the IP address, or serve it over HTTPS.`;
+    alert(msg);
+    return;
+  }
+
+  try {
+    mediaStream=await navigator.mediaDevices.getUserMedia({
+      audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true},
+    });
+  } catch(e) { alert(`Microphone error: ${e.message}`); return; }
+
+  try { audioCtx=new AudioContext({sampleRate:TARGET_SR}); }
+  catch { audioCtx=new AudioContext(); }
+
+  const actualSR=audioCtx.sampleRate;
+  const source=audioCtx.createMediaStreamSource(mediaStream);
+  processor=audioCtx.createScriptProcessor(4096,1,1);
+
+  let localBuf=[];
+  processor.onaudioprocess=e=>{
+    let s=e.inputBuffer.getChannelData(0).slice();
+    if(actualSR!==TARGET_SR) s=resampleTo16k(s,actualSR);
+    for(let i=0;i<s.length;i++) localBuf.push(s[i]);
+    while(localBuf.length>=FRAME_SAMPLES){
+      processVADFrame(localBuf.splice(0,FRAME_SAMPLES));
+    }
+  };
+  source.connect(processor);
+  processor.connect(audioCtx.destination);
+
+  isRecording=true; isSpeaking=false; speechCount=0; silenceCount=0; speechChunks=[];
+  document.getElementById('mic-btn').className='active';
+  document.getElementById('mic-label').textContent='Stop Recording';
+  setRecStatus('Listening…');
+}
+
+function stopRecording() {
+  isRecording=false; isSpeaking=false;
+  if(speechChunks.length>=SPEECH_TRIGGER) flushUtterance();
+  if(processor){processor.disconnect();processor=null;}
+  if(audioCtx){audioCtx.close().catch(()=>{});audioCtx=null;}
+  if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
+  document.getElementById('mic-btn').className='idle';
+  document.getElementById('mic-label').textContent='Start Recording';
+  setRecStatus('Idle');
+}
+
+document.getElementById('mic-btn').addEventListener('click',()=>{
+  if(isRecording) stopRecording(); else startRecording();
+});
+
+// ═══════════════════════════════════════════════════════════
+// Chat input events
+// ═══════════════════════════════════════════════════════════
+const chatInput=document.getElementById('chat-input');
+chatInput.addEventListener('input',()=>{
+  chatInput.style.height='auto';
+  chatInput.style.height=Math.min(chatInput.scrollHeight,140)+'px';
+});
+chatInput.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatMessage();}
+});
+document.getElementById('send-btn').addEventListener('click',sendChatMessage);
+document.getElementById('new-btn').addEventListener('click',createSession);
+
+// ═══════════════════════════════════════════════════════════
+// Resizable panel
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const resizer = document.getElementById('resizer');
+  const trPanel = document.getElementById('transcription');
+
+  // Restore saved width
+  const saved = localStorage.getItem('tr_panel_width');
+  if (saved) trPanel.style.width = saved + 'px';
+
+  let active = false, startX = 0, startW = 0;
+
+  resizer.addEventListener('mousedown', e => {
+    active = true;
+    startX = e.clientX;
+    startW = trPanel.offsetWidth;
+    resizer.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!active) return;
+    // drag left → increase right panel width
+    const dx = startX - e.clientX;
+    const maxW = window.innerWidth - 220 - 300;  // leave chat at least 300px
+    trPanel.style.width = Math.max(280, Math.min(startW + dx, maxW)) + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!active) return;
+    active = false;
+    resizer.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem('tr_panel_width', trPanel.offsetWidth);
+  });
+})();
+
+// ═══════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════
+updateSrvLabel();
+renderSessions();
+if(sessions.length) switchSession(sessions[0].id);
+else createSession();
+
+// Fetch available chat models
+(async function fetchModels() {
+  try {
+    const resp = await fetch('/api/models');
+    const data = await resp.json();
+    const sel = document.getElementById('model-select');
+    if (!data.models || !data.models.length) {
+      sel.innerHTML = '<option value="auto">No models (set API keys)</option>';
+      return;
+    }
+    sel.innerHTML = data.models.map(m =>
+      `<option value="${m.id}">${esc(m.label)}</option>`
+    ).join('');
+  } catch(e) {
+    console.error('Failed to fetch models:', e);
+  }
+})();
+</script>
+</body>
+</html>
