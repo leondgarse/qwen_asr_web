@@ -143,7 +143,6 @@ def _start_vl_server(model_name: str) -> subprocess.Popen:
         "--model", model_name,
         "--port", str(VL_PORT),
         "--host", "0.0.0.0",
-        "--limit-mm-per-prompt", "image=1",
         "--trust-remote-code",
         "--max-model-len", os.getenv("VL_MAX_MODEL_LEN", "8192"),
         "--enable-prefix-caching",
