@@ -82,7 +82,8 @@ async def _check_vl() -> bool:
 
 
 def _vl_oai_url() -> str:
-    return f"http://{ASR_HOST}:{_vl_info['port']}/v1/chat/completions"
+    # Route through the main server proxy so no extra tunnel is needed for VL_PORT
+    return f"http://{ASR_HOST}:{ASR_PORT}/vl/proxy/v1/chat/completions"
 
 
 def _build_vl_messages(system: str, msgs: list, image: str) -> list:

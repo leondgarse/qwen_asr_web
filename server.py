@@ -373,6 +373,24 @@ async def vl_health():
     return {"enabled": running, "model": VL_MODEL_NAME or None, "port": VL_PORT if running else None}
 
 
+@app.api_route("/vl/proxy/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def vl_proxy(path: str, request: Request):
+    """Proxy VL requests through the main server so remote clients don't need a direct tunnel to VL_PORT."""
+    import httpx
+    from fastapi.responses import StreamingResponse as _SR
+    url = f"http://localhost:{VL_PORT}/{path}"
+    body = await request.body()
+    fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
+
+    async def _iter():
+        async with httpx.AsyncClient(timeout=300) as client:
+            async with client.stream(request.method, url, content=body, headers=fwd_headers) as resp:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+
+    return _SR(_iter(), media_type="text/event-stream")
+
+
 @app.post("/transcribe")
 async def transcribe(
     files: List[UploadFile] = File(...),
