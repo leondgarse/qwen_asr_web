@@ -1,14 +1,25 @@
+import argparse
 import os
 import io
 import json
 import asyncio
 import logging
 import subprocess
+import sys
 import tempfile
+import urllib.request
 from typing import Optional, List, Tuple
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 import time
+
+# ── CLI args ──────────────────────────────────────────────────
+_parser = argparse.ArgumentParser(add_help=False)
+_parser.add_argument('--qwenvl', nargs='?', const='Qwen/Qwen2.5-VL-3B-Instruct', metavar='MODEL',
+                     help='Enable Qwen-VL model (optional model name, default: Qwen2.5-VL-3B-Instruct)')
+_cli, _ = _parser.parse_known_args()
+VL_MODEL_NAME = _cli.qwenvl or os.getenv('VL_MODEL_NAME', '')
+VL_PORT       = int(os.getenv('VL_PORT', '8002'))
 
 import uvicorn
 import numpy as np
@@ -124,6 +135,39 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 
 
 # -----------------------------
+# VL server helpers
+# -----------------------------
+def _start_vl_server(model_name: str) -> subprocess.Popen:
+    cmd = [
+        sys.executable, "-m", "vllm.entrypoints.openai.api_server",
+        "--model", model_name,
+        "--port", str(VL_PORT),
+        "--host", "0.0.0.0",
+        "--limit-mm-per-prompt", "image=1",
+        "--trust-remote-code",
+        "--max-model-len", os.getenv("VL_MAX_MODEL_LEN", "8192"),
+        "--enable-prefix-caching",
+    ]
+    if os.environ.get("VLLM_TARGET_DEVICE") == "cpu":
+        cmd += ["--device", "cpu"]
+    else:
+        cmd += ["--gpu-memory-utilization", os.getenv("VL_GPU_MEMORY_UTILIZATION", "0.45")]
+    logger.info(f"Starting VL server: {' '.join(cmd)}")
+    return subprocess.Popen(cmd)
+
+
+def _wait_vl_ready(timeout: int = 300) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f"http://localhost:{VL_PORT}/health", timeout=2)
+            return True
+        except Exception:
+            time.sleep(5)
+    return False
+
+
+# -----------------------------
 # Model loading
 # -----------------------------
 def load_models():
@@ -149,6 +193,7 @@ def load_models():
             max_num_batched_tokens=int(os.getenv("MAX_MODEL_LEN", "4096")),
             enforce_eager=True,
             trust_remote_code=True,
+            enable_prefix_caching=get_env_bool("ENABLE_PREFIX_CACHING", "true"),
         )
         logger.info("ASR Model loaded successfully.")
     else:
@@ -192,6 +237,15 @@ def load_models():
         except Exception as e:
             logger.warning(f"Warmup failed (non-critical): {e}")
 
+    if VL_MODEL_NAME:
+        logger.info(f"Starting VL model server: {VL_MODEL_NAME} on port {VL_PORT} ...")
+        proc = _start_vl_server(VL_MODEL_NAME)
+        models["_vl_proc"] = proc
+        if _wait_vl_ready():
+            logger.info(f"VL server ready on port {VL_PORT}.")
+        else:
+            logger.warning("VL server did not become ready within timeout; continuing anyway.")
+
     model_status = "ready"
     model_ready_event.set()
     logger.info("Server is ready to accept requests.")
@@ -213,7 +267,15 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # Shutdown
+        # Shutdown VL subprocess first
+        proc = models.pop("_vl_proc", None)
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            logger.info("VL server stopped.")
         models.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -259,6 +321,13 @@ async def health():
         info["memory"]["gpu_allocated_mb"] = torch.cuda.memory_allocated() // (1024 * 1024)
         info["memory"]["gpu_reserved_mb"] = torch.cuda.memory_reserved() // (1024 * 1024)
     return info
+
+
+@app.get("/vl/health")
+async def vl_health():
+    proc = models.get("_vl_proc")
+    running = proc is not None and proc.poll() is None
+    return {"enabled": running, "model": VL_MODEL_NAME or None, "port": VL_PORT if running else None}
 
 
 @app.post("/transcribe")

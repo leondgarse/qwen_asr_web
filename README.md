@@ -8,10 +8,12 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 - **Vocal extraction** — isolates human voice from background music before ASR (via [demucs](https://github.com/facebookresearch/demucs))
 - **VAD segmentation** — WebRTC VAD splits audio into speech segments
 - **Vocabulary context** — feed a PDF or Markdown document to improve domain-specific terminology
-- **Streaming** — real-time transcription over WebSocket (partial + final results)
+- **Streaming** — real-time transcription over WebSocket; audio sent as captured, partial results shown immediately
+- **Prefix caching** — vLLM APC reuses KV-cache for the shared context/system-prompt prefix across utterances
 - **Forced alignment** — word-level timestamps via Qwen3-ForcedAligner
 - **Microphone input** — live transcription from system mic
-- **Web UI** — browser-based chat interface with session management and live mic transcription
+- **Web UI** — instructor interface with session management, live mic transcription, AI chat, and segment delete/export
+- **Viewer page** — read-only live view for students; receives real-time transcription and partials via SSE, includes AI chat using the instructor's API keys
 
 ## Models
 
@@ -47,6 +49,7 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 | `GPU_MEMORY_UTILIZATION` | `0.75` | vLLM GPU fraction |
 | `ENABLE_ASR_MODEL` | `true` | |
 | `ENABLE_ALIGNER_MODEL` | `true` | |
+| `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches context prefix KV blocks across utterances |
 
 ### 2. Transcribe a file
 
@@ -122,12 +125,66 @@ MISTRAL_API_KEY=...        python web_server.py   # Mistral
 
 Then open `http://localhost:8001` in a browser.
 
-Three-panel layout:
-- **Left** — session list, auto-saved to `localStorage`; double-click to rename
+**Instructor page** (`/`) — three-panel layout:
+- **Left** — session list, auto-saved to `localStorage`; double-click to rename; ✕ button deletes individual segments
 - **Middle** — AI chat about the current session's transcription (Claude / Gemini / Mistral)
-- **Right** — live mic transcription with VAD, language selector, and PDF/MD context upload
+- **Right** — live mic transcription with VAD, language selector, PDF/MD context upload, and export button (↓) to download `[timestamp] text` TXT
 
 > **Microphone** requires a secure context. Access via `http://localhost:8001`, not an IP address over HTTP. For remote access, use HTTPS (self-signed cert with `openssl req -x509 ...`).
+
+### 6. Viewer page (live lecture feed)
+
+Students open `http://[your-ip]:8001/viewer` on the same network.
+
+- **Left** — AI chat (uses the instructor's API keys; students need no accounts)
+- **Right** — live transcription, updated in real-time via SSE including partial text as the model decodes
+
+The instructor's page automatically pushes each new segment and partial result to `web_server.py`, which relays them to all connected viewers. Session state is held in memory — restarting `web_server.py` clears it, viewers reconnect automatically.
+
+#### Same-network access (simple)
+
+Students browse to `http://[instructor-local-ip]:8001/viewer`. Find your local IP with `ip route get 1` or `hostname -I`.
+
+> Many public/university WiFi networks enable **AP isolation**, which blocks device-to-device traffic even on the same SSID. If students can't reach the page, use the SSH tunnel approach below.
+
+#### Remote access via SSH reverse tunnel (recommended for classroom WiFi)
+
+On your laptop, open a persistent reverse tunnel to an internet-accessible server:
+
+```bash
+ssh -R 0.0.0.0:8001:localhost:8001 -i ~/.ssh/your-key.pem ubuntu@<relay-server-ip>
+```
+
+This forwards `<relay-server-ip>:8001` through to your local `web_server.py`. Keep the terminal open during class. Students then open:
+
+```
+http://<relay-server-ip>:8001/viewer
+```
+
+**One-time relay server setup** (AWS EC2 or any VPS):
+
+```bash
+# 1. Allow the port in the OS firewall
+sudo ufw allow 8001
+
+# 2. Enable GatewayPorts so the tunnel binds to 0.0.0.0, not just 127.0.0.1
+echo 'GatewayPorts clientspecified' | sudo tee -a /etc/ssh/sshd_config
+sudo systemctl restart ssh      # Ubuntu: "ssh", not "sshd"
+
+# 3. Verify
+sudo sshd -T | grep gatewayports
+# → gatewayports clientspecified
+```
+
+For **AWS EC2**: also open port 8001 in the instance's **Security Group inbound rules** (AWS Console → EC2 → Security → Edit inbound rules → Custom TCP 8001 0.0.0.0/0). `ufw` alone is not enough on EC2 — the security group is enforced before traffic reaches the instance.
+
+For a more resilient tunnel that auto-reconnects on drop:
+
+```bash
+autossh -M 0 -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" \
+  -o "ExitOnForwardFailure=yes" \
+  -R 0.0.0.0:8001:localhost:8001 -i ~/.ssh/your-key.pem ubuntu@<relay-server-ip> -N
+```
 
 ## HTTP API
 

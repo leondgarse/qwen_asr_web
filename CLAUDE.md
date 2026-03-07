@@ -29,15 +29,30 @@ Server loads models in the background; poll `GET /health` until `"status": "read
 
 Three-panel layout served from `web_server.py` at `http://localhost:8001`:
 
-- **Left**: Session list — auto-saved to `localStorage`, double-click to rename
+- **Left**: Session list — auto-saved to `localStorage`, double-click to rename, ✕ per segment to delete
 - **Middle**: AI chat — asks questions about the current session's transcription
-- **Right**: Live mic transcription — VAD-based utterance detection, language selector, PDF/MD context upload, resizable via drag handle
+- **Right**: Live mic transcription — VAD-based utterance detection, language selector, PDF/MD context upload, resizable via drag handle, export button (↓) downloads `[timestamp] text` TXT
 
-**Chat backend**: calls `http://localhost:8000/chat` (ASR server) by default. Server URL is configurable via the ⚙ settings button (stored in `localStorage`). Requires server restart after adding `/chat` endpoint.
+**Chat backend**: calls `POST /api/chat` on `web_server.py` (Claude / Gemini / Mistral). Server URL configurable via ⚙ settings button.
 
 **Microphone**: requires a **secure context** — access via `http://localhost:8001`, not an IP address over HTTP. For remote access, use HTTPS (self-signed cert with `openssl req -x509 ...`).
 
+**Streaming**: WebSocket opened at VAD speech-start; audio frames streamed in real-time (not buffered until silence). Partial results shown as the model decodes. Partials are also broadcast to viewers (throttled ~6/s via `pushPartial`).
+
 **PDF context extraction**: requires `web_server.py` running (`pip install pypdf`). MD/TXT files are parsed directly in the browser.
+
+**Viewer broadcast**: each new segment and partial calls `pushToServer()` / `pushPartial()` which POST to `web_server.py`'s relay endpoints.
+
+## Viewer Page (`web/viewer.html`)
+
+Served at `http://localhost:8001/viewer`. Students open this URL during a lecture.
+
+- **Left**: AI chat (same models as instructor, uses instructor's API keys)
+- **Right**: Live transcription — receives segments and partials via SSE from `web_server.py`
+- Incremental rendering — only new segments are appended, no full rebuild
+- Partial text displayed in real-time (yellow italic, same as instructor's page)
+- Export button downloads the current transcription as TXT
+- Auto-reconnects if the SSE connection drops
 
 ## client_file.py Pipeline
 
@@ -101,6 +116,7 @@ Response: SSE stream (`data: {"text": "..."}` lines, ending with `data: [DONE]`)
 | `ENABLE_ASR_MODEL` | `true` | set `false` to skip |
 | `ENABLE_ALIGNER_MODEL` | `true` | set `false` to skip |
 | `VLLM_TARGET_DEVICE` | `cpu` | override to `cuda` for GPU |
+| `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches KV blocks for repeated context/system-prompt prefix across utterances |
 
 ## Key Notes
 
@@ -110,3 +126,6 @@ Response: SSE stream (`data: {"text": "..."}` lines, ending with `data: [DONE]`)
 - **`Qwen3ASRModel` does NOT have `.generate()`** — use `models["asr"].model.generate()` for the underlying vLLM engine.
 - **Server restart required** after any change to `server.py` endpoints.
 - The `transcription.json` (non-streaming) is produced by `process_video.py` via the `/transcribe` HTTP endpoint.
+- **Prefix caching (APC)**: context + system prompt tokens are cached in the vLLM KV-cache after the first utterance. Subsequent utterances skip recomputing the shared prefix. Disable with `ENABLE_PREFIX_CACHING=false` if your vLLM version doesn't support it on the target device.
+- **Viewer broadcast relay** (`web_server.py`): session state is held in-memory (`_broadcast` dict); restating `web_server.py` clears it. Viewers reconnect automatically via SSE.
+- **Viewer API keys**: `/api/chat` on `web_server.py` uses the instructor's API keys — students need no keys.

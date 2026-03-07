@@ -6,16 +6,16 @@
 <title>Qwen3-ASR Studio</title>
 <style>
 :root {
-  --bg:     #0d1117;
-  --bg2:    #161b22;
-  --bg3:    #21262d;
-  --border: #30363d;
-  --text:   #c9d1d9;
-  --muted:  #8b949e;
-  --accent: #58a6ff;
-  --green:  #3fb950;
-  --red:    #f85149;
-  --yellow: #d29922;
+  --bg:     #f6f8fa;
+  --bg2:    #ffffff;
+  --bg3:    #eaeef2;
+  --border: #d0d7de;
+  --text:   #24292f;
+  --muted:  #57606a;
+  --accent: #0969da;
+  --green:  #1a7f37;
+  --red:    #cf222e;
+  --yellow: #9a6700;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
@@ -66,7 +66,20 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
 .msg.assistant { align-self: flex-start; }
 .msg-bubble { padding: 10px 14px; border-radius: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .msg.user .msg-bubble { background: var(--accent); color: #fff; border-radius: 12px 12px 2px 12px; }
-.msg.assistant .msg-bubble { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px 12px 12px 2px; }
+.msg.assistant .msg-bubble { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px 12px 12px 2px; color: var(--text); white-space: normal; }
+.msg-bubble p { margin: 0 0 .5em; }
+.msg-bubble p:last-child { margin-bottom: 0; }
+.msg-bubble ul, .msg-bubble ol { padding-left: 1.4em; margin: .3em 0; }
+.msg-bubble li { margin: .15em 0; }
+.msg-bubble h1, .msg-bubble h2, .msg-bubble h3 { font-size: 1em; font-weight: 700; margin: .6em 0 .2em; }
+.msg-bubble code { background: rgba(0,0,0,.07); padding: 1px 5px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+.msg-bubble pre { background: rgba(0,0,0,.07); border-radius: 6px; padding: 8px 10px; overflow-x: auto; margin: .4em 0; }
+.msg-bubble pre code { background: none; padding: 0; }
+.msg-bubble blockquote { border-left: 3px solid var(--border); margin: .4em 0; padding-left: .8em; color: var(--muted); }
+.msg-bubble hr { border: none; border-top: 1px solid var(--border); margin: .5em 0; }
+.msg-bubble table { border-collapse: collapse; margin: .4em 0; }
+.msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 4px 8px; font-size: 13px; }
+.msg-bubble a { color: var(--accent); }
 .msg-time { font-size: 11px; color: var(--muted); margin-top: 4px; text-align: right; }
 .msg.assistant .msg-time { text-align: left; }
 #no-session { color: var(--muted); text-align: center; margin: auto; }
@@ -80,6 +93,15 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
             padding: 0 18px; cursor: pointer; font-size: 14px; transition: opacity .15s; }
 #send-btn:hover { opacity: .85; }
 #send-btn:disabled { opacity: .4; cursor: default; }
+#img-btn { background: none; border: none; color: var(--muted); cursor: pointer;
+           font-size: 18px; padding: 0 4px; line-height: 1; transition: color .15s; flex-shrink: 0; }
+#img-btn:hover { color: var(--accent); }
+#chat-img-preview { display: none; align-items: center; gap: 8px; padding: 6px 18px;
+                    background: var(--bg2); border-top: 1px solid var(--border); }
+#chat-img-thumb { height: 52px; border-radius: 6px; border: 1px solid var(--border); }
+#chat-img-clear { background: none; border: none; color: var(--red); cursor: pointer; font-size: 14px; }
+#translate-lang { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+                  border-radius: 6px; padding: 2px 6px; font-size: 11px; display: none; }
 
 /* ── Transcription panel ── */
 #transcription { background: var(--bg2); flex-shrink: 0; width: 480px; min-width: 280px;
@@ -89,11 +111,11 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
 #tr-hd-row h3 { font-size: 13px; font-weight: 600; color: var(--muted);
                 text-transform: uppercase; letter-spacing: .05em; flex: 1; }
 
-/* Settings */
-#settings-btn { background: none; border: none; color: var(--muted); cursor: pointer;
+/* Settings / Export */
+#settings-btn, #export-btn { background: none; border: none; color: var(--muted); cursor: pointer;
                 font-size: 16px; padding: 2px 4px; border-radius: 4px; line-height: 1;
                 transition: color .15s; }
-#settings-btn:hover { color: var(--text); }
+#settings-btn:hover, #export-btn:hover { color: var(--text); }
 #settings-panel { display: none; background: var(--bg3); border: 1px solid var(--border);
                   border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
 #settings-panel.open { display: block; }
@@ -140,9 +162,20 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
 /* Transcription output */
 #tr-output { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
 .tr-entry { background: var(--bg3); border-radius: 8px; padding: 8px 10px;
-            border-left: 3px solid var(--accent); }
+            border-left: 3px solid var(--accent); display: flex; align-items: flex-start; gap: 6px; }
+.tr-body  { flex: 1; min-width: 0; }
 .tr-ts  { font-size: 11px; color: var(--muted); margin-bottom: 3px; font-variant-numeric: tabular-nums; }
 .tr-txt { line-height: 1.5; }
+.tr-del { opacity: 0; background: none; border: none; color: var(--red); cursor: pointer;
+          font-size: 14px; padding: 0 2px; line-height: 1; flex-shrink: 0; margin-top: 1px;
+          transition: opacity .15s; }
+.tr-entry:hover .tr-del { opacity: 1; }
+.tr-translate { opacity: 0; background: none; border: none; color: var(--muted); cursor: pointer;
+                font-size: 13px; padding: 0 2px; line-height: 1; flex-shrink: 0; margin-top: 1px;
+                transition: opacity .15s; }
+.tr-entry:hover .tr-translate { opacity: 1; }
+.tr-translated { font-size: 13px; color: var(--muted); font-style: italic;
+                 margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
 #partial-entry { background: var(--bg3); border-radius: 8px; padding: 8px 10px;
                  border-left: 3px solid var(--yellow); opacity: .7; display: none; }
 #partial-entry .tr-txt { font-style: italic; }
@@ -174,7 +207,13 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
       <select id="model-select"><option value="auto">Loading models…</option></select>
     </div>
     <div id="messages"><div id="no-session">Select or create a session to begin.</div></div>
+    <div id="chat-img-preview">
+      <img id="chat-img-thumb" alt="attached">
+      <button id="chat-img-clear" title="Remove image">✕</button>
+    </div>
     <div id="chat-input-area">
+      <button id="img-btn" title="Attach image">🖼</button>
+      <input type="file" id="img-input" accept="image/*" style="display:none">
       <textarea id="chat-input" rows="1" placeholder="Ask about the transcription… (Enter to send)"></textarea>
       <button id="send-btn" disabled>Send</button>
     </div>
@@ -187,6 +226,16 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
     <div id="tr-hd">
       <div id="tr-hd-row">
         <h3>Live Transcription</h3>
+        <select id="translate-lang" title="Translation target language">
+          <option value="English">→ EN</option>
+          <option value="Chinese">→ ZH</option>
+          <option value="Japanese">→ JA</option>
+          <option value="Korean">→ KO</option>
+          <option value="French">→ FR</option>
+          <option value="German">→ DE</option>
+          <option value="Spanish">→ ES</option>
+        </select>
+        <button id="export-btn" title="Export transcription as TXT">&#8659;</button>
         <button id="settings-btn" title="Server settings">⚙</button>
       </div>
 
@@ -240,6 +289,7 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
   </div><!-- #main -->
 
 </div>
+<script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════
 // Server config (persisted to localStorage)
@@ -292,19 +342,21 @@ const ENERGY_THRESHOLD = 0.018;     // RMS; tune for your mic / room
 let sessions    = JSON.parse(localStorage.getItem('asr_sessions') || '[]');
 let currentId   = null;
 let contextText = '';
+let vlAvailable = false;
+let attachedImage = '';  // base64 of currently attached image
 
 // Recording
-let mediaStream  = null;
-let audioCtx     = null;
-let processor    = null;
-let isRecording  = false;
-let speechChunks = [];
-let isSpeaking   = false;
-let speechCount  = 0;
-let silenceCount = 0;
+let mediaStream   = null;
+let audioCtx      = null;
+let processor     = null;
+let isRecording   = false;
+let isSpeaking    = false;
+let speechCount   = 0;
+let silenceCount  = 0;
+let uttFrameCount = 0;
 
-// Serial transcription queue
-let txQueue = Promise.resolve();
+// Live streaming utterance handle
+let currentUtt = null;
 
 // ═══════════════════════════════════════════════════════════
 // Utilities
@@ -312,6 +364,17 @@ let txQueue = Promise.resolve();
 function uid()    { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function fmtTime(d=new Date()) { return d.toTimeString().slice(0,8); }
 function esc(s)   { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function renderMd(s) { return typeof marked !== 'undefined' ? marked.parse(s) : esc(s).replace(/\n/g,'<br>'); }
+
+// Push current session to server for viewer broadcast (fire-and-forget)
+function pushToServer() {
+  const s = getSession(); if (!s) return;
+  fetch('/api/session/push', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: s.name, segments: s.transcription }),
+  }).catch(() => {});
+}
 
 function rms(f32) {
   let s = 0;
@@ -360,11 +423,13 @@ function deleteSession(id) {
   renderSessions();
 }
 function switchSession(id) {
+  if (currentId === id) return;
   currentId = id;
   renderSessions();
   renderChat();
   renderTranscriptionPanel();
   document.getElementById('send-btn').disabled = false;
+  pushToServer();
 }
 function renderSessions() {
   document.getElementById('sessions-list').innerHTML = sessions.map(s=>`
@@ -383,6 +448,7 @@ function renameSession(el, id) {
     el.contentEditable='false';
     const s=getSession(id); if(s){ s.name=el.textContent.trim()||s.name; saveState(); }
     renderSessions();
+    pushToServer();
   };
   el.onkeydown = e => { if(e.key==='Enter'){e.preventDefault();el.blur();} };
 }
@@ -404,7 +470,7 @@ function renderChat() {
   }
   box.innerHTML = s.messages.map(m=>`
     <div class="msg ${m.role}">
-      <div class="msg-bubble">${esc(m.content)}</div>
+      <div class="msg-bubble">${m.role==='assistant' ? renderMd(m.content) : esc(m.content)}</div>
       <div class="msg-time">${m.time||''}</div>
     </div>`).join('');
   scrollBottom(box);
@@ -428,6 +494,11 @@ async function sendChatMessage() {
 
   try {
     const selectedModel = document.getElementById('model-select').value;
+    const imageToSend = attachedImage;
+    attachedImage = '';
+    document.getElementById('chat-img-preview').style.display = 'none';
+    document.getElementById('img-input').value = '';
+
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -436,6 +507,7 @@ async function sendChatMessage() {
         transcription: getTranscriptionText(),
         context: contextText,
         model: selectedModel,
+        image: imageToSend,
       }),
     });
 
@@ -475,25 +547,50 @@ function renderTranscriptionPanel() {
   if (!s||!s.transcription.length) { empty.style.display='block'; return; }
   empty.style.display='none';
   const partial=document.getElementById('partial-entry');
-  s.transcription.forEach(entry=>{
-    const div=document.createElement('div');
-    div.className='tr-entry';
-    div.innerHTML=`<div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`;
-    out.insertBefore(div,partial);
+  s.transcription.forEach((entry,idx)=>{
+    out.insertBefore(makeTrEntry(entry,idx),partial);
   });
   scrollBottom(out);
+}
+function makeTrEntry(entry, idx) {
+  const div=document.createElement('div');
+  div.className='tr-entry';
+  div.innerHTML=`<div class="tr-body"><div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div></div>`
+    +(vlAvailable ? `<button class="tr-translate" onclick="translateSegment(this,${idx})" title="Translate">⇄</button>` : '')
+    +`<button class="tr-del" onclick="deleteSegment(${idx})" title="Delete">✕</button>`;
+  return div;
+}
+async function translateSegment(btn, idx) {
+  const s=getSession(); if(!s||!s.transcription[idx]) return;
+  btn.disabled=true; btn.textContent='…';
+  try {
+    const lang=document.getElementById('translate-lang').value;
+    const resp=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:s.transcription[idx].text, target_language:lang})});
+    if(!resp.ok) throw new Error(await resp.text());
+    const {translated}=await resp.json();
+    const body=btn.closest('.tr-entry').querySelector('.tr-body');
+    let el=body.querySelector('.tr-translated');
+    if(!el){el=document.createElement('div');el.className='tr-translated';body.appendChild(el);}
+    el.textContent=translated;
+  } catch(e){ console.error('Translation error:',e); }
+  btn.disabled=false; btn.textContent='⇄';
+}
+function deleteSegment(idx) {
+  const s=getSession(); if(!s) return;
+  s.transcription.splice(idx,1);
+  saveState(); pushToServer();
+  renderTranscriptionPanel();
+  renderSessions();
 }
 function appendTranscription(text) {
   const s=getSession(); if(!s||!text.trim()) return;
   const entry={time:fmtTime(), text:text.trim()};
-  s.transcription.push(entry); saveState();
+  s.transcription.push(entry); saveState(); pushToServer();
   document.getElementById('tr-empty').style.display='none';
   const out=document.getElementById('tr-output');
   const partial=document.getElementById('partial-entry');
-  const div=document.createElement('div');
-  div.className='tr-entry';
-  div.innerHTML=`<div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`;
-  out.insertBefore(div,partial);
+  out.insertBefore(makeTrEntry(entry, s.transcription.length-1), partial);
   scrollBottom(out);
   renderSessions();
 }
@@ -502,6 +599,20 @@ function setPartial(text) {
   const txt=document.getElementById('partial-txt');
   if (text) { txt.textContent=text; el.style.display='block'; scrollBottom(document.getElementById('tr-output')); }
   else       { el.style.display='none'; txt.textContent=''; }
+  pushPartial(text);
+}
+
+let _partialTimer = null;
+function pushPartial(text) {
+  if (_partialTimer) return;
+  _partialTimer = setTimeout(() => {
+    _partialTimer = null;
+    fetch('/api/session/partial', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text }),
+    }).catch(() => {});
+  }, 150); // max ~6 pushes/s
 }
 function setRecStatus(msg) { document.getElementById('rec-status').textContent=msg; }
 
@@ -548,85 +659,77 @@ document.getElementById('ctx-pick-btn').addEventListener('click', () =>
   document.getElementById('ctx-file-input').click());
 
 // ═══════════════════════════════════════════════════════════
-// VAD
+// VAD + real-time streaming
 // ═══════════════════════════════════════════════════════════
+
+// Opens a WebSocket utterance: audio frames can be sent as they arrive.
+// Returns a handle { sendFrame(f32), stop() }.
+function startStreamingUtterance() {
+  const lang   = document.getElementById('lang-select').value;
+  const wsUrl  = lang ? `${asrWsUrl()}?language=${encodeURIComponent(lang)}` : asrWsUrl();
+  let ws, isOpen = false;
+  const pending = []; // Int16 buffers waiting for ws.onopen
+
+  try { ws = new WebSocket(wsUrl); } catch(e) { console.error(e); return null; }
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    isOpen = true;
+    ws.send(JSON.stringify({
+      type: 'start', format: 'pcm_s16le', sample_rate_hz: TARGET_SR, channels: 1,
+      context: contextText
+        ? `Reference only — do NOT transcribe this. Vocabulary hint: ${contextText.slice(0,600)}`
+        : '',
+    }));
+    for (const buf of pending) ws.send(buf);
+    pending.length = 0;
+  };
+  ws.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      if      (msg.type === 'partial') setPartial(msg.text);
+      else if (msg.type === 'final')  { ws.close(); setPartial(''); if (msg.text) appendTranscription(msg.text); setRecStatus(isRecording?'Listening…':'Idle'); }
+      else if (msg.type === 'error')  { ws.close(); setPartial(''); setRecStatus(isRecording?'Listening…':'Idle'); }
+    } catch {}
+  };
+  ws.onerror = () => { setPartial(''); setRecStatus(isRecording?'Listening…':'Idle'); };
+
+  return {
+    sendFrame(f32) {
+      const buf = float32ToInt16Buffer(f32);
+      if (isOpen) ws.send(buf); else pending.push(buf);
+    },
+    stop() {
+      if (isOpen) ws.send(JSON.stringify({type:'stop'}));
+      else { ws.onopen = null; ws.close(); setRecStatus(isRecording?'Listening…':'Idle'); }
+    },
+  };
+}
+
 function processVADFrame(frame) {
   const speech = rms(frame) > ENERGY_THRESHOLD;
   if (!isSpeaking) {
     if (speech) {
       if (++speechCount >= SPEECH_TRIGGER) {
-        isSpeaking=true; speechCount=0; silenceCount=0;
-        speechChunks=[new Float32Array(frame)];
+        isSpeaking = true; speechCount = 0; silenceCount = 0; uttFrameCount = 0;
+        currentUtt = startStreamingUtterance();
         setRecStatus('Speaking…');
       }
-    } else { speechCount=0; setRecStatus('Listening…'); }
+    } else { speechCount = 0; setRecStatus('Listening…'); }
   } else {
-    speechChunks.push(new Float32Array(frame));
+    if (currentUtt) currentUtt.sendFrame(frame);
+    uttFrameCount++;
     if (!speech) {
       if (++silenceCount >= SILENCE_TRIGGER) flushUtterance();
-    } else { silenceCount=0; }
-    if (isSpeaking && speechChunks.length >= MAX_UTT_FRAMES) flushUtterance();
+    } else { silenceCount = 0; }
+    if (uttFrameCount >= MAX_UTT_FRAMES) flushUtterance();
   }
 }
 
 function flushUtterance() {
-  const tail  = Math.floor(SILENCE_TRIGGER / 2);
-  const keep  = Math.max(SPEECH_TRIGGER, speechChunks.length - silenceCount + tail);
-  const chunks = speechChunks.slice(0, keep);
-  isSpeaking=false; speechChunks=[]; silenceCount=0; speechCount=0;
+  isSpeaking = false; silenceCount = 0; speechCount = 0; uttFrameCount = 0;
   setPartial(''); setRecStatus(isRecording ? 'Transcribing…' : 'Idle');
-
-  const total = chunks.reduce((s,c)=>s+c.length, 0);
-  if (total < SPEECH_TRIGGER * FRAME_SAMPLES) { setRecStatus(isRecording?'Listening…':'Idle'); return; }
-
-  const merged=new Float32Array(total);
-  let off=0; for(const c of chunks){merged.set(c,off);off+=c.length;}
-  const buf=float32ToInt16Buffer(merged);
-  txQueue=txQueue.then(()=>doTranscribe(buf)).catch(console.error);
-}
-
-async function doTranscribe(int16Buf) {
-  const lang=document.getElementById('lang-select').value;
-  const wsUrl=lang ? `${asrWsUrl()}?language=${encodeURIComponent(lang)}` : asrWsUrl();
-
-  return new Promise(resolve=>{
-    let done=false;
-    const finish=(text)=>{
-      if(done) return; done=true;
-      setPartial('');
-      if(text) appendTranscription(text);
-      setRecStatus(isRecording?'Listening…':'Idle');
-      resolve();
-    };
-
-    let ws;
-    try { ws=new WebSocket(wsUrl); } catch(e){ console.error(e); finish(''); return; }
-    ws.binaryType='arraybuffer';
-
-    ws.onopen=()=>{
-      ws.send(JSON.stringify({
-        type:'start', format:'pcm_s16le', sample_rate_hz:TARGET_SR, channels:1,
-        context: contextText
-          ? `Reference only — do NOT transcribe this. Vocabulary hint: ${contextText.slice(0,600)}`
-          : '',
-      }));
-      const CHUNK=1600*2;
-      for(let i=0;i<int16Buf.byteLength;i+=CHUNK)
-        ws.send(int16Buf.slice(i, Math.min(i+CHUNK,int16Buf.byteLength)));
-      ws.send(JSON.stringify({type:'stop'}));
-    };
-    ws.onmessage=e=>{
-      try {
-        const msg=JSON.parse(e.data);
-        if(msg.type==='partial') setPartial(msg.text);
-        else if(msg.type==='final'){ws.close();finish(msg.text);}
-        else if(msg.type==='error'){ws.close();finish('');}
-      } catch {}
-    };
-    ws.onclose=()=>finish('');
-    ws.onerror=()=>finish('');
-    setTimeout(()=>{try{ws.close();}catch{}finish('');},30000);
-  });
+  if (currentUtt) { currentUtt.stop(); currentUtt = null; }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -678,8 +781,9 @@ async function startRecording() {
 }
 
 function stopRecording() {
-  isRecording=false; isSpeaking=false;
-  if(speechChunks.length>=SPEECH_TRIGGER) flushUtterance();
+  isRecording=false;
+  if(isSpeaking) flushUtterance();
+  isSpeaking=false;
   if(processor){processor.disconnect();processor=null;}
   if(audioCtx){audioCtx.close().catch(()=>{});audioCtx=null;}
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
@@ -690,6 +794,20 @@ function stopRecording() {
 
 document.getElementById('mic-btn').addEventListener('click',()=>{
   if(isRecording) stopRecording(); else startRecording();
+});
+
+// ═══════════════════════════════════════════════════════════
+// Export transcription
+// ═══════════════════════════════════════════════════════════
+document.getElementById('export-btn').addEventListener('click', () => {
+  const s = getSession(); if (!s || !s.transcription.length) { alert('No transcription to export.'); return; }
+  const txt = s.transcription.map(e => `[${e.time}] ${e.text}`).join('\n');
+  const blob = new Blob([txt], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${s.name.replace(/[^a-z0-9_\-]/gi,'_')}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -755,7 +873,26 @@ renderSessions();
 if(sessions.length) switchSession(sessions[0].id);
 else createSession();
 
-// Fetch available chat models
+// ── Image attach ──────────────────────────────────────────────
+document.getElementById('img-btn').addEventListener('click', () =>
+  document.getElementById('img-input').click());
+document.getElementById('img-input').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    attachedImage = ev.target.result.split(',')[1];
+    document.getElementById('chat-img-thumb').src = ev.target.result;
+    document.getElementById('chat-img-preview').style.display = 'flex';
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('chat-img-clear').addEventListener('click', () => {
+  attachedImage = '';
+  document.getElementById('chat-img-preview').style.display = 'none';
+  document.getElementById('img-input').value = '';
+});
+
+// ── Fetch available chat models ───────────────────────────────
 (async function fetchModels() {
   try {
     const resp = await fetch('/api/models');
@@ -768,6 +905,8 @@ else createSession();
     sel.innerHTML = data.models.map(m =>
       `<option value="${m.id}">${esc(m.label)}</option>`
     ).join('');
+    vlAvailable = data.models.some(m => m.id === 'local-vl');
+    if (vlAvailable) document.getElementById('translate-lang').style.display = '';
   } catch(e) {
     console.error('Failed to fetch models:', e);
   }
