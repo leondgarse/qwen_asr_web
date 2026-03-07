@@ -17,6 +17,8 @@ import time
 _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument('--qwenvl', nargs='?', const='Qwen/Qwen2.5-VL-3B-Instruct', metavar='MODEL',
                      help='Enable Qwen-VL model (optional model name, default: Qwen2.5-VL-3B-Instruct)')
+_parser.add_argument('--port', type=int, default=int(os.getenv('ASR_PORT', '8000')),
+                     help='Port to listen on (default: 8000)')
 _cli, _ = _parser.parse_known_args()
 VL_MODEL_NAME = _cli.qwenvl or os.getenv('VL_MODEL_NAME', '')
 VL_PORT       = int(os.getenv('VL_PORT', '8002'))
@@ -179,12 +181,10 @@ def _start_vl_server(model_name: str, vl_util: float) -> subprocess.Popen:
         "--max-model-len", os.getenv("VL_MAX_MODEL_LEN", "8192"),
         "--enable-prefix-caching",
     ]
-    if os.environ.get("VLLM_TARGET_DEVICE") == "cpu":
-        cmd += ["--device", "cpu"]
-    else:
+    if os.environ.get("VLLM_TARGET_DEVICE") != "cpu":
         cmd += ["--gpu-memory-utilization", str(vl_util)]
     logger.info(f"Starting VL server: {' '.join(cmd)}")
-    return subprocess.Popen(cmd)
+    return subprocess.Popen(cmd, env=os.environ.copy())
 
 
 def _wait_vl_ready(timeout: int = 300) -> bool:
@@ -578,4 +578,4 @@ async def websocket_endpoint(
 
 if __name__ == "__main__":
     # NOTE: for GPU models, keep workers=1 unless you deliberately replicate the model per worker.
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=_cli.port)
