@@ -135,9 +135,41 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 
 
 # -----------------------------
+# GPU memory auto-sizing
+# -----------------------------
+# Approximate fixed GB needed for each component (model weights + KV cache for single user)
+_ASR_TARGET_GB  = 6.0   # 1.7B weights ~3.4 GB + KV cache
+_ALIGNER_GB     = 1.5   # rough footprint of the 0.6B aligner
+_VL_BUFFER_GB   = 2.0   # safety headroom for VL model
+
+
+def _auto_asr_gpu_util() -> float:
+    """Compute gpu_memory_utilization so ASR model gets ~_ASR_TARGET_GB regardless of GPU size."""
+    if not torch.cuda.is_available():
+        return 0.15
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+    target   = min(_ASR_TARGET_GB, total_gb * 0.25)
+    util     = round(target / total_gb, 3)
+    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {target:.1f} GB / {total_gb:.1f} GB total)")
+    return util
+
+
+def _auto_vl_gpu_util(asr_util: float) -> float:
+    """Compute gpu_memory_utilization for VL model using remaining GPU after ASR + aligner."""
+    if not torch.cuda.is_available():
+        return 0.55
+    total_gb  = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+    used_gb   = total_gb * asr_util + _ALIGNER_GB + _VL_BUFFER_GB
+    remaining = max(0.0, total_gb - used_gb)
+    util      = round(min(remaining / total_gb, 0.90), 3)
+    logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({remaining:.1f} GB remaining / {total_gb:.1f} GB total)")
+    return util
+
+
+# -----------------------------
 # VL server helpers
 # -----------------------------
-def _start_vl_server(model_name: str) -> subprocess.Popen:
+def _start_vl_server(model_name: str, vl_util: float) -> subprocess.Popen:
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_name,
@@ -150,7 +182,7 @@ def _start_vl_server(model_name: str) -> subprocess.Popen:
     if os.environ.get("VLLM_TARGET_DEVICE") == "cpu":
         cmd += ["--device", "cpu"]
     else:
-        cmd += ["--gpu-memory-utilization", os.getenv("VL_GPU_MEMORY_UTILIZATION", "0.45")]
+        cmd += ["--gpu-memory-utilization", str(vl_util)]
     logger.info(f"Starting VL server: {' '.join(cmd)}")
     return subprocess.Popen(cmd)
 
@@ -173,6 +205,7 @@ def load_models():
     global model_status
     logger.info("Loading models...")
     model_status = "loading_models"
+    asr_util = 0.0  # tracked for VL auto-sizing
 
     if get_env_bool("ENABLE_ASR_MODEL", "true"):
         if Qwen3ASRModel is None:
@@ -184,9 +217,11 @@ def load_models():
         os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
         os.environ.setdefault("VLLM_CPU_KVCACHE_SPACE", "4")
         os.environ.setdefault("VLLM_LIMIT_MM_PER_PROMPT", "audio=32768")
+        asr_util_env = os.getenv("GPU_MEMORY_UTILIZATION", "")
+        asr_util = float(asr_util_env) if asr_util_env else _auto_asr_gpu_util()  # noqa: F841 (used below)
         models["asr"] = Qwen3ASRModel.LLM(
             model=model_name,
-            gpu_memory_utilization=float(os.getenv("GPU_MEMORY_UTILIZATION", "0.75")),
+            gpu_memory_utilization=asr_util,
             max_new_tokens=int(os.getenv("MAX_NEW_TOKENS", "8192")),
             max_model_len=int(os.getenv("MAX_MODEL_LEN", "4096")),
             max_num_batched_tokens=int(os.getenv("MAX_MODEL_LEN", "4096")),
@@ -238,7 +273,9 @@ def load_models():
 
     if VL_MODEL_NAME:
         logger.info(f"Starting VL model server: {VL_MODEL_NAME} on port {VL_PORT} ...")
-        proc = _start_vl_server(VL_MODEL_NAME)
+        vl_util_env = os.getenv("VL_GPU_MEMORY_UTILIZATION", "")
+        vl_util = float(vl_util_env) if vl_util_env else _auto_vl_gpu_util(asr_util if "asr" in models else 0.0)
+        proc = _start_vl_server(VL_MODEL_NAME, vl_util)
         models["_vl_proc"] = proc
         if _wait_vl_ready():
             logger.info(f"VL server ready on port {VL_PORT}.")

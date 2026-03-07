@@ -111,7 +111,8 @@ Response: SSE stream (`data: {"text": "..."}` lines, ending with `data: [DONE]`)
 |---|---|---|
 | `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | local dir or HF model id |
 | `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
-| `GPU_MEMORY_UTILIZATION` | `0.75` | vLLM GPU fraction |
+| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~6 GB (≈15% on 40 GB GPU). Override to fix. |
+| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL model; auto uses remaining GPU after ASR + aligner (~1.5 GB) + 2 GB buffer |
 | `MAX_NEW_TOKENS` | `8192` | |
 | `ENABLE_ASR_MODEL` | `true` | set `false` to skip |
 | `ENABLE_ALIGNER_MODEL` | `true` | set `false` to skip |
