@@ -15,7 +15,7 @@ import time
 
 # ── CLI args ──────────────────────────────────────────────────
 _parser = argparse.ArgumentParser(add_help=False)
-_parser.add_argument('--qwenvl', nargs='?', const='Qwen/Qwen2.5-VL-3B-Instruct', metavar='MODEL',
+_parser.add_argument('--qwenvl', nargs='?', const='Qwen/Qwen3-VL-2B-Instruct', metavar='MODEL',
                      help='Enable Qwen-VL model (optional model name, default: Qwen2.5-VL-3B-Instruct)')
 _parser.add_argument('--port', type=int, default=int(os.getenv('ASR_PORT', '8000')),
                      help='Port to listen on (default: 8000)')
@@ -157,14 +157,15 @@ def _auto_asr_gpu_util() -> float:
 
 
 def _auto_vl_gpu_util(asr_util: float) -> float:
-    """Compute gpu_memory_utilization for VL model using remaining GPU after ASR + aligner."""
+    """Compute gpu_memory_utilization for VL model using actual free GPU memory at call time."""
     if not torch.cuda.is_available():
         return 0.55
-    total_gb  = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-    used_gb   = total_gb * asr_util + _ALIGNER_GB + _VL_BUFFER_GB
-    remaining = max(0.0, total_gb - used_gb)
-    util      = round(min(remaining / total_gb, 0.90), 3)
-    logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({remaining:.1f} GB remaining / {total_gb:.1f} GB total)")
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+    free_bytes, _ = torch.cuda.mem_get_info(0)
+    free_gb = free_bytes / 1024 ** 3
+    usable_gb = max(0.0, free_gb - _VL_BUFFER_GB)
+    util = round(min(usable_gb / total_gb, 0.90), 3)
+    logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total)")
     return util
 
 
@@ -181,10 +182,16 @@ def _start_vl_server(model_name: str, vl_util: float) -> subprocess.Popen:
         "--max-model-len", os.getenv("VL_MAX_MODEL_LEN", "8192"),
         "--enable-prefix-caching",
     ]
-    if os.environ.get("VLLM_TARGET_DEVICE") != "cpu":
+    if torch.cuda.is_available():
         cmd += ["--gpu-memory-utilization", str(vl_util)]
+    vl_env = os.environ.copy()
+    # ASR model sets VLLM_TARGET_DEVICE=cpu for its CPU backend; VL server must run on GPU
+    vl_env.pop("VLLM_TARGET_DEVICE", None)
+    vl_env.pop("VLLM_ENABLE_V1_MULTIPROCESSING", None)
+    vl_env.pop("VLLM_CPU_KVCACHE_SPACE", None)
+    vl_env.pop("VLLM_LIMIT_MM_PER_PROMPT", None)
     logger.info(f"Starting VL server: {' '.join(cmd)}")
-    return subprocess.Popen(cmd, env=os.environ.copy())
+    return subprocess.Popen(cmd, env=vl_env)
 
 
 def _wait_vl_ready(timeout: int = 300) -> bool:

@@ -294,15 +294,25 @@ async def translate(req: TranslateReq):
 # ── Local VL (direct OpenAI-compatible call to vLLM) ─────────
 async def _stream_local_vl(system: str, msgs: list, image: str = ""):
     import httpx
+    url = _vl_oai_url()
+    built_msgs = _build_vl_messages(system, msgs, image)
     body = {
         "model": _vl_info.get("model", ""),
-        "messages": _build_vl_messages(system, msgs, image),
+        "messages": built_msgs,
         "stream": True,
         "max_tokens": 1024,
     }
+    logger.info(f"VL request -> {url} model={body['model']} msgs={len(built_msgs)}")
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream("POST", _vl_oai_url(), json=body) as resp:
+            async with client.stream("POST", url, json=body) as resp:
+                logger.info(f"VL response status: {resp.status_code}")
+                if resp.status_code != 200:
+                    err_body = await resp.aread()
+                    logger.error(f"VL error body: {err_body.decode()}")
+                    yield f"data: {json.dumps({'error': f'VL server {resp.status_code}: {err_body.decode()}'})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -393,7 +403,9 @@ def _stream_mistral(system: str, msgs: list):
 
     try:
         client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
-        full_msgs = [{"role": "system", "content": system}] + msgs
+        # Mistral rejects assistant messages with None/empty content
+        clean_msgs = [m for m in msgs if m.get("content") is not None]
+        full_msgs = [{"role": "system", "content": system}] + clean_msgs
 
         response = client.chat.stream(
             model=MODELS["mistral"]["default_model"],
