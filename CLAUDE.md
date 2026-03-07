@@ -6,6 +6,7 @@ Speech-to-text service using local Qwen3-ASR-1.7B model via vLLM.
 
 ```bash
 python server.py          # ASR + chat API, binds 0.0.0.0:8000
+python server.py --port 9000   # custom port
 python web_server.py      # Web UI, binds 0.0.0.0:8001 (optional, for PDF context extraction)
 ```
 
@@ -118,6 +119,7 @@ Response: SSE stream (`data: {"text": "..."}` lines, ending with `data: [DONE]`)
 | `ENABLE_ALIGNER_MODEL` | `true` | set `false` to skip |
 | `VLLM_TARGET_DEVICE` | `cpu` | override to `cuda` for GPU |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches KV blocks for repeated context/system-prompt prefix across utterances |
+| `ASR_PORT` | `8000` | default port; overridden by `--port` CLI arg |
 
 ## Key Notes
 

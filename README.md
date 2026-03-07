@@ -36,6 +36,7 @@ pip install -r requirements.txt
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python server.py
+CUDA_VISIBLE_DEVICES=0 python server.py --port 9000   # custom port
 ```
 
 Poll `GET /health` until `"status": "ready"` before sending requests.
@@ -48,6 +49,7 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 | `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
 | `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~6 GB regardless of GPU size |
 | `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL model (`--qwenvl`); auto uses remaining GPU after ASR + aligner |
+| `ASR_PORT` | `8000` | default port; overridden by `--port` CLI arg |
 | `ENABLE_ASR_MODEL` | `true` | |
 | `ENABLE_ALIGNER_MODEL` | `true` | |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches context prefix KV blocks across utterances |
