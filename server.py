@@ -143,6 +143,7 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 _ASR_TARGET_GB  = 6.0   # 1.7B weights ~3.4 GB + KV cache
 _ALIGNER_GB     = 1.5   # rough footprint of the 0.6B aligner
 _VL_BUFFER_GB   = 2.0   # safety headroom for VL model
+_VL_MAX_GB      = 20.0  # cap VL server memory so KV cache doesn't balloon on large GPUs
 
 
 def _auto_asr_gpu_util() -> float:
@@ -163,23 +164,41 @@ def _auto_vl_gpu_util(asr_util: float) -> float:
     total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
     free_bytes, _ = torch.cuda.mem_get_info(0)
     free_gb = free_bytes / 1024 ** 3
-    usable_gb = max(0.0, free_gb - _VL_BUFFER_GB)
+    usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_MAX_GB)
     util = round(min(usable_gb / total_gb, 0.90), 3)
     logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total)")
     return util
+
+
+def _auto_vl_max_model_len() -> int:
+    """Pick max_model_len for VL based on free GPU memory, capped at 16384."""
+    if not torch.cuda.is_available():
+        return 4096
+    free_bytes, _ = torch.cuda.mem_get_info(0)
+    free_gb = free_bytes / 1024 ** 3
+    if free_gb >= 20:
+        return 16384
+    elif free_gb >= 12:
+        return 8192
+    elif free_gb >= 6:
+        return 4096
+    return 2048
 
 
 # -----------------------------
 # VL server helpers
 # -----------------------------
 def _start_vl_server(model_name: str, vl_util: float) -> subprocess.Popen:
+    vl_max_len_env = os.getenv("VL_MAX_MODEL_LEN", "")
+    vl_max_len = int(vl_max_len_env) if vl_max_len_env else _auto_vl_max_model_len()
+    logger.info(f"VL max_model_len={vl_max_len}")
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_name,
         "--port", str(VL_PORT),
         "--host", "0.0.0.0",
         "--trust-remote-code",
-        "--max-model-len", os.getenv("VL_MAX_MODEL_LEN", "8192"),
+        "--max-model-len", str(vl_max_len),
         "--enable-prefix-caching",
     ]
     if torch.cuda.is_available():

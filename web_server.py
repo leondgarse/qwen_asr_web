@@ -86,13 +86,24 @@ def _vl_oai_url() -> str:
     return f"http://{ASR_HOST}:{ASR_PORT}/vl/proxy/v1/chat/completions"
 
 
+_VL_MAX_HISTORY_CHARS = 12000  # rough guard: trim old turns if context gets too large
+
 def _build_vl_messages(system: str, msgs: list, image: str) -> list:
+    # Trim history from the front (keep latest turns) to avoid exceeding context length.
+    # Always keep the last user message; drop older pairs until total chars fit.
+    trimmed = list(msgs)
+    while len(trimmed) > 1:
+        total = sum(len(str(m.get("content", ""))) for m in trimmed) + len(system)
+        if total <= _VL_MAX_HISTORY_CHARS:
+            break
+        trimmed.pop(0)  # drop oldest message
+
     oai_msgs = []
     if system:
         oai_msgs.append({"role": "system", "content": system})
-    for i, m in enumerate(msgs):
+    for i, m in enumerate(trimmed):
         content = m["content"]
-        if image and m["role"] == "user" and i == len(msgs) - 1:
+        if image and m["role"] == "user" and i == len(trimmed) - 1:
             content = [
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
                 {"type": "text", "text": content},
