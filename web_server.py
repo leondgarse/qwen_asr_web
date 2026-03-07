@@ -88,7 +88,7 @@ def _vl_oai_url() -> str:
 
 _VL_MAX_HISTORY_CHARS = 12000  # rough guard: trim old turns if context gets too large
 
-def _build_vl_messages(system: str, msgs: list, image: str) -> list:
+def _build_vl_messages(system: str, msgs: list, image: str, image_mime: str = "image/jpeg") -> list:
     # Trim history from the front (keep latest turns) to avoid exceeding context length.
     # Always keep the last user message; drop older pairs until total chars fit.
     trimmed = list(msgs)
@@ -105,7 +105,7 @@ def _build_vl_messages(system: str, msgs: list, image: str) -> list:
         content = m["content"]
         if image and m["role"] == "user" and i == len(trimmed) - 1:
             content = [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
+                {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image}"}},
                 {"type": "text", "text": content},
             ]
         oai_msgs.append({"role": m["role"], "content": content})
@@ -152,7 +152,8 @@ class ChatReq(BaseModel):
     transcription: str = ""
     context: str = ""
     model: str = "auto"  # "auto" picks first available
-    image: str = ""      # base64-encoded image; used only with local-vl model
+    image: str = ""           # base64-encoded image; used only with local-vl model
+    image_mime: str = "image/jpeg"
 
 
 class TranslateReq(BaseModel):
@@ -262,7 +263,7 @@ async def chat(req: ChatReq):
     if model_id == "local-vl":
         if not vl_ok:
             raise HTTPException(503, detail="VL model not available. Start server.py with --qwenvl.")
-        return StreamingResponse(_stream_local_vl(system_text, msgs, req.image),
+        return StreamingResponse(_stream_local_vl(system_text, msgs, req.image, req.image_mime),
                                  media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache"})
 
@@ -304,10 +305,10 @@ async def translate(req: TranslateReq):
 
 
 # ── Local VL (direct OpenAI-compatible call to vLLM) ─────────
-async def _stream_local_vl(system: str, msgs: list, image: str = ""):
+async def _stream_local_vl(system: str, msgs: list, image: str = "", image_mime: str = "image/jpeg"):
     import httpx
     url = _vl_oai_url()
-    built_msgs = _build_vl_messages(system, msgs, image)
+    built_msgs = _build_vl_messages(system, msgs, image, image_mime)
     body = {
         "model": _vl_info.get("model", ""),
         "messages": built_msgs,

@@ -343,7 +343,18 @@ let sessions    = JSON.parse(localStorage.getItem('asr_sessions') || '[]');
 let currentId   = null;
 let contextText = '';
 let vlAvailable = false;
-let attachedImage = '';  // base64 of currently attached image
+let attachedImage = '';     // base64 of currently attached image
+let attachedImageMime = 'image/jpeg';  // MIME type of attached image
+
+function updateImgBtn() {
+  const isVl = document.getElementById('model-select').value === 'local-vl';
+  document.getElementById('img-btn').style.display = isVl ? '' : 'none';
+  if (!isVl) {
+    attachedImage = '';
+    document.getElementById('chat-img-preview').style.display = 'none';
+    document.getElementById('img-input').value = '';
+  }
+}
 
 // Recording
 let mediaStream   = null;
@@ -495,7 +506,9 @@ async function sendChatMessage() {
   try {
     const selectedModel = document.getElementById('model-select').value;
     const imageToSend = attachedImage;
+    const imageMimeToSend = attachedImageMime;
     attachedImage = '';
+    attachedImageMime = 'image/jpeg';
     document.getElementById('chat-img-preview').style.display = 'none';
     document.getElementById('img-input').value = '';
 
@@ -508,6 +521,7 @@ async function sendChatMessage() {
         context: contextText,
         model: selectedModel,
         image: imageToSend,
+        image_mime: imageMimeToSend,
       }),
     });
 
@@ -878,6 +892,7 @@ document.getElementById('img-btn').addEventListener('click', () =>
   document.getElementById('img-input').click());
 document.getElementById('img-input').addEventListener('change', e => {
   const file = e.target.files[0]; if (!file) return;
+  attachedImageMime = file.type || 'image/jpeg';
   const reader = new FileReader();
   reader.onload = ev => {
     attachedImage = ev.target.result.split(',')[1];
@@ -907,6 +922,8 @@ document.getElementById('chat-img-clear').addEventListener('click', () => {
     ).join('');
     vlAvailable = data.models.some(m => m.id === 'local-vl');
     if (vlAvailable) document.getElementById('translate-lang').style.display = '';
+    updateImgBtn();
+    document.getElementById('model-select').addEventListener('change', updateImgBtn);
   } catch(e) {
     console.error('Failed to fetch models:', e);
   }

@@ -401,13 +401,27 @@ async def vl_proxy(path: str, request: Request):
     body = await request.body()
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
 
-    async def _iter():
-        async with httpx.AsyncClient(timeout=300) as client:
-            async with client.stream(request.method, url, content=body, headers=fwd_headers) as resp:
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
+    from fastapi.responses import Response as _R
+    # Check if client wants streaming (SSE) or a plain response
+    req_body_json = {}
+    try:
+        import json as _json
+        req_body_json = _json.loads(body) if body else {}
+    except Exception:
+        pass
 
-    return _SR(_iter(), media_type="text/event-stream")
+    if req_body_json.get("stream"):
+        async def _iter():
+            async with httpx.AsyncClient(timeout=300) as client:
+                async with client.stream(request.method, url, content=body, headers=fwd_headers) as resp:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+        return _SR(_iter(), media_type="text/event-stream")
+    else:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.request(request.method, url, content=body, headers=fwd_headers)
+        return _R(content=resp.content, status_code=resp.status_code,
+                  media_type=resp.headers.get("content-type", "application/json"))
 
 
 @app.post("/transcribe")
