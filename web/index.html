@@ -569,7 +569,9 @@ function renderTranscriptionPanel() {
 function makeTrEntry(entry, idx) {
   const div=document.createElement('div');
   div.className='tr-entry';
-  div.innerHTML=`<div class="tr-body"><div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div></div>`
+  div.innerHTML=`<div class="tr-body"><div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`
+    +(entry.translated ? `<div class="tr-translated">${esc(entry.translated)}</div>` : '')
+    +`</div>`
     +(vlAvailable ? `<button class="tr-translate" onclick="translateSegment(this,${idx})" title="Translate">⇄</button>` : '')
     +`<button class="tr-del" onclick="deleteSegment(${idx})" title="Delete">✕</button>`;
   return div;
@@ -583,12 +585,36 @@ async function translateSegment(btn, idx) {
       body:JSON.stringify({text:s.transcription[idx].text, target_language:lang})});
     if(!resp.ok) throw new Error(await resp.text());
     const {translated}=await resp.json();
+    s.transcription[idx].translated = translated;
+    saveState();
     const body=btn.closest('.tr-entry').querySelector('.tr-body');
     let el=body.querySelector('.tr-translated');
     if(!el){el=document.createElement('div');el.className='tr-translated';body.appendChild(el);}
     el.textContent=translated;
   } catch(e){ console.error('Translation error:',e); }
   btn.disabled=false; btn.textContent='⇄';
+}
+function shouldAutoTranslate() {
+  if (!vlAvailable) return false;
+  const target = document.getElementById('translate-lang').value;
+  const source = document.getElementById('lang-select').value;
+  return target !== source;
+}
+async function autoTranslateEntry(entryEl, entry) {
+  if (!shouldAutoTranslate()) return;
+  const lang = document.getElementById('translate-lang').value;
+  try {
+    const resp = await fetch('/api/translate', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text: entry.text, target_language: lang})});
+    if (!resp.ok) return;
+    const {translated} = await resp.json();
+    entry.translated = translated;
+    saveState();
+    const body = entryEl.querySelector('.tr-body');
+    let el = body.querySelector('.tr-translated');
+    if (!el) { el=document.createElement('div'); el.className='tr-translated'; body.appendChild(el); }
+    el.textContent = translated;
+  } catch(e) { console.error('Auto-translate error:', e); }
 }
 function deleteSegment(idx) {
   const s=getSession(); if(!s) return;
@@ -604,9 +630,11 @@ function appendTranscription(text) {
   document.getElementById('tr-empty').style.display='none';
   const out=document.getElementById('tr-output');
   const partial=document.getElementById('partial-entry');
-  out.insertBefore(makeTrEntry(entry, s.transcription.length-1), partial);
+  const el=makeTrEntry(entry, s.transcription.length-1);
+  out.insertBefore(el, partial);
   scrollBottom(out);
   renderSessions();
+  autoTranslateEntry(el, entry);
 }
 function setPartial(text) {
   const el=document.getElementById('partial-entry');
@@ -921,7 +949,11 @@ document.getElementById('chat-img-clear').addEventListener('click', () => {
       `<option value="${m.id}">${esc(m.label)}</option>`
     ).join('');
     vlAvailable = data.models.some(m => m.id === 'local-vl');
-    if (vlAvailable) document.getElementById('translate-lang').style.display = '';
+    console.log('[models] fetched:', data.models.map(m=>m.id), '| vlAvailable:', vlAvailable);
+    if (vlAvailable) {
+      document.getElementById('translate-lang').style.display = '';
+      renderTranscriptionPanel();  // re-render so existing segments get the ⇄ button
+    }
     updateImgBtn();
     document.getElementById('model-select').addEventListener('change', updateImgBtn);
   } catch(e) {

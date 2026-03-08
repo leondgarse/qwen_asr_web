@@ -76,7 +76,9 @@ async def _check_vl() -> bool:
             if _vl_available:
                 _vl_info = info
                 _vl_checked = True
-    except Exception:
+            logger.info(f"VL health check -> {info} | vl_url={_vl_oai_url()}")
+    except Exception as e:
+        logger.warning(f"VL health check failed: {e}")
         _vl_available = False
     return _vl_available
 
