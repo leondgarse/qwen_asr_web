@@ -242,7 +242,7 @@ async def list_models():
     result = available_models()
     if await _check_vl():
         label = (_vl_info.get("model") or "").split("/")[-1] or "Qwen-VL"
-        result.append({"id": "local-vl", "label": f"Local VL ({label})"})
+        result.insert(0, {"id": "local-vl", "label": f"Local VL ({label})"})
     return {"models": result}
 
 
