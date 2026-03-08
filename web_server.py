@@ -164,14 +164,16 @@ class TranslateReq(BaseModel):
 
 
 # ── Routes ───────────────────────────────────────────────────
+_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+
 @app.get("/")
 async def root():
-    return FileResponse(Path(__file__).parent / "web" / "index.html")
+    return FileResponse(Path(__file__).parent / "web" / "index.html", headers=_NO_CACHE)
 
 
 @app.get("/viewer")
 async def viewer_page():
-    return FileResponse(Path(__file__).parent / "web" / "viewer.html")
+    return FileResponse(Path(__file__).parent / "web" / "viewer.html", headers=_NO_CACHE)
 
 
 # ── Broadcast endpoints ───────────────────────────────────────
