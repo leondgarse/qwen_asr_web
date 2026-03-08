@@ -15,13 +15,17 @@ import time
 
 # ── CLI args ──────────────────────────────────────────────────
 _parser = argparse.ArgumentParser(add_help=False)
-_parser.add_argument('--qwenvl', nargs='?', const='Qwen/Qwen3-VL-2B-Instruct', metavar='MODEL',
-                     help='Enable Qwen-VL model (optional model name, default: Qwen2.5-VL-3B-Instruct)')
-_parser.add_argument('--port', type=int, default=int(os.getenv('ASR_PORT', '8000')),
-                     help='Port to listen on (default: 8000)')
+_parser.add_argument(
+    "--qwenvl",
+    nargs="?",
+    const="Qwen/Qwen3-VL-2B-Instruct",
+    metavar="MODEL",
+    help="Enable Qwen-VL model (optional model name, default: Qwen2.5-VL-3B-Instruct)",
+)
+_parser.add_argument("--port", type=int, default=int(os.getenv("ASR_PORT", "8000")), help="Port to listen on (default: 8000)")
 _cli, _ = _parser.parse_known_args()
-VL_MODEL_NAME = _cli.qwenvl or os.getenv('VL_MODEL_NAME', '')
-VL_PORT       = int(os.getenv('VL_PORT', '8002'))
+VL_MODEL_NAME = _cli.qwenvl or os.getenv("VL_MODEL_NAME", "")
+VL_PORT = int(os.getenv("VL_PORT", "8002"))
 
 import uvicorn
 import numpy as np
@@ -140,19 +144,19 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 # GPU memory auto-sizing
 # -----------------------------
 # Approximate fixed GB needed for each component (model weights + KV cache for single user)
-_ASR_TARGET_GB  = 6.0   # 1.7B weights ~3.4 GB + KV cache
-_ALIGNER_GB     = 1.5   # rough footprint of the 0.6B aligner
-_VL_BUFFER_GB   = 2.0   # safety headroom for VL model
-_VL_MAX_GB      = 20.0  # cap VL server memory so KV cache doesn't balloon on large GPUs
+_ASR_TARGET_GB = 6.0  # 1.7B weights ~3.4 GB + KV cache
+_ALIGNER_GB = 1.5  # rough footprint of the 0.6B aligner
+_VL_BUFFER_GB = 2.0  # safety headroom for VL model
+_VL_MAX_GB = 20.0  # cap VL server memory so KV cache doesn't balloon on large GPUs
 
 
 def _auto_asr_gpu_util() -> float:
     """Compute gpu_memory_utilization so ASR model gets ~_ASR_TARGET_GB regardless of GPU size."""
     if not torch.cuda.is_available():
         return 0.15
-    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-    target   = min(_ASR_TARGET_GB, total_gb * 0.25)
-    util     = round(target / total_gb, 3)
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    target = min(_ASR_TARGET_GB, total_gb * 0.25)
+    util = round(target / total_gb, 3)
     logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {target:.1f} GB / {total_gb:.1f} GB total)")
     return util
 
@@ -161,9 +165,9 @@ def _auto_vl_gpu_util(asr_util: float) -> float:
     """Compute gpu_memory_utilization for VL model using actual free GPU memory at call time."""
     if not torch.cuda.is_available():
         return 0.55
-    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
     free_bytes, _ = torch.cuda.mem_get_info(0)
-    free_gb = free_bytes / 1024 ** 3
+    free_gb = free_bytes / 1024**3
     usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_MAX_GB)
     util = round(min(usable_gb / total_gb, 0.90), 3)
     logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total)")
@@ -175,7 +179,7 @@ def _auto_vl_max_model_len() -> int:
     if not torch.cuda.is_available():
         return 4096
     free_bytes, _ = torch.cuda.mem_get_info(0)
-    free_gb = free_bytes / 1024 ** 3
+    free_gb = free_bytes / 1024**3
     if free_gb >= 20:
         return 16384
     elif free_gb >= 12:
@@ -193,12 +197,18 @@ def _start_vl_server(model_name: str, vl_util: float) -> subprocess.Popen:
     vl_max_len = int(vl_max_len_env) if vl_max_len_env else _auto_vl_max_model_len()
     logger.info(f"VL max_model_len={vl_max_len}")
     cmd = [
-        sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-        "--model", model_name,
-        "--port", str(VL_PORT),
-        "--host", "0.0.0.0",
+        sys.executable,
+        "-m",
+        "vllm.entrypoints.openai.api_server",
+        "--model",
+        model_name,
+        "--port",
+        str(VL_PORT),
+        "--host",
+        "0.0.0.0",
         "--trust-remote-code",
-        "--max-model-len", str(vl_max_len),
+        "--max-model-len",
+        str(vl_max_len),
         "--enable-prefix-caching",
     ]
     if torch.cuda.is_available():
@@ -397,31 +407,35 @@ async def vl_proxy(path: str, request: Request):
     """Proxy VL requests through the main server so remote clients don't need a direct tunnel to VL_PORT."""
     import httpx
     from fastapi.responses import StreamingResponse as _SR
+
     url = f"http://localhost:{VL_PORT}/{path}"
     body = await request.body()
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
 
     from fastapi.responses import Response as _R
+
     # Check if client wants streaming (SSE) or a plain response
     req_body_json = {}
     try:
         import json as _json
+
         req_body_json = _json.loads(body) if body else {}
     except Exception:
         pass
 
     if req_body_json.get("stream"):
+
         async def _iter():
             async with httpx.AsyncClient(timeout=300) as client:
                 async with client.stream(request.method, url, content=body, headers=fwd_headers) as resp:
                     async for chunk in resp.aiter_bytes():
                         yield chunk
+
         return _SR(_iter(), media_type="text/event-stream")
     else:
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.request(request.method, url, content=body, headers=fwd_headers)
-        return _R(content=resp.content, status_code=resp.status_code,
-                  media_type=resp.headers.get("content-type", "application/json"))
+        return _R(content=resp.content, status_code=resp.status_code, media_type=resp.headers.get("content-type", "application/json"))
 
 
 @app.post("/transcribe")

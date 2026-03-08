@@ -57,9 +57,9 @@ async def _notify_viewers(payload: str) -> None:
 ASR_HOST = os.getenv("ASR_HOST", "localhost")
 ASR_PORT = int(os.getenv("ASR_PORT", "8000"))
 
-_vl_checked   = False   # True once we got a definitive "enabled" answer
+_vl_checked = False  # True once we got a definitive "enabled" answer
 _vl_available = False
-_vl_info: dict = {}     # {"model": ..., "port": ...}
+_vl_info: dict = {}  # {"model": ..., "port": ...}
 
 
 async def _check_vl() -> bool:
@@ -69,6 +69,7 @@ async def _check_vl() -> bool:
         return True
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=3) as client:
             r = await client.get(f"http://{ASR_HOST}:{ASR_PORT}/vl/health")
             info = r.json()
@@ -89,6 +90,7 @@ def _vl_oai_url() -> str:
 
 
 _VL_MAX_HISTORY_CHARS = 12000  # rough guard: trim old turns if context gets too large
+
 
 def _build_vl_messages(system: str, msgs: list, image: str, image_mime: str = "image/jpeg") -> list:
     # Trim history from the front (keep latest turns) to avoid exceeding context length.
@@ -154,7 +156,7 @@ class ChatReq(BaseModel):
     transcription: str = ""
     context: str = ""
     model: str = "auto"  # "auto" picks first available
-    image: str = ""           # base64-encoded image; used only with local-vl model
+    image: str = ""  # base64-encoded image; used only with local-vl model
     image_mime: str = "image/jpeg"
 
 
@@ -165,6 +167,7 @@ class TranslateReq(BaseModel):
 
 # ── Routes ───────────────────────────────────────────────────
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+
 
 @app.get("/")
 async def root():
@@ -198,11 +201,10 @@ async def push_partial(data: PartialPush):
 async def push_session(data: BroadcastPush):
     """Transcriber posts current session state; all viewers are notified via SSE."""
     async with _broadcast_lock:
-        _broadcast["name"]     = data.name
+        _broadcast["name"] = data.name
         _broadcast["segments"] = data.segments
-        _broadcast["seq"]     += 1
-        payload = json.dumps({"type": "update", "name": data.name,
-                               "segments": data.segments, "seq": _broadcast["seq"]})
+        _broadcast["seq"] += 1
+        payload = json.dumps({"type": "update", "name": data.name, "segments": data.segments, "seq": _broadcast["seq"]})
     await _notify_viewers(payload)
     return {"ok": True, "viewers": len(_viewers)}
 
@@ -216,8 +218,7 @@ async def stream_session(request: Request):
     async def event_gen():
         # Send current state immediately so viewer isn't blank
         async with _broadcast_lock:
-            snapshot = json.dumps({"type": "update", "name": _broadcast["name"],
-                                   "segments": _broadcast["segments"], "seq": _broadcast["seq"]})
+            snapshot = json.dumps({"type": "update", "name": _broadcast["name"], "segments": _broadcast["segments"], "seq": _broadcast["seq"]})
         yield f"data: {snapshot}\n\n"
 
         try:
@@ -228,13 +229,12 @@ async def stream_session(request: Request):
                     msg = await asyncio.wait_for(queue.get(), timeout=20)
                     yield f"data: {msg}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"   # prevents proxy/browser timeout
+                    yield ": keepalive\n\n"  # prevents proxy/browser timeout
         finally:
             if queue in _viewers:
                 _viewers.remove(queue)
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/models")
@@ -267,9 +267,9 @@ async def chat(req: ChatReq):
     if model_id == "local-vl":
         if not vl_ok:
             raise HTTPException(503, detail="VL model not available. Start server.py with --qwenvl.")
-        return StreamingResponse(_stream_local_vl(system_text, msgs, req.image, req.image_mime),
-                                 media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache"})
+        return StreamingResponse(
+            _stream_local_vl(system_text, msgs, req.image, req.image_mime), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+        )
 
     if model_id not in MODELS:
         raise HTTPException(400, detail=f"Unknown model: {model_id}")
@@ -289,11 +289,12 @@ async def translate(req: TranslateReq):
     if not await _check_vl():
         raise HTTPException(503, detail="VL model not available. Start server.py with --qwenvl.")
     import httpx
+
     body = {
         "model": _vl_info.get("model", ""),
         "messages": [
             {"role": "system", "content": f"Translate the following text to {req.target_language}. Output only the translated text, nothing else."},
-            {"role": "user",   "content": req.text},
+            {"role": "user", "content": req.text},
         ],
         "stream": False,
         "max_tokens": 512,
@@ -311,6 +312,7 @@ async def translate(req: TranslateReq):
 # ── Local VL (direct OpenAI-compatible call to vLLM) ─────────
 async def _stream_local_vl(system: str, msgs: list, image: str = "", image_mime: str = "image/jpeg"):
     import httpx
+
     url = _vl_oai_url()
     built_msgs = _build_vl_messages(system, msgs, image, image_mime)
     body = {
