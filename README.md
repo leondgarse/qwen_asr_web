@@ -12,8 +12,9 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 - **Prefix caching** — vLLM APC reuses KV-cache for the shared context/system-prompt prefix across utterances
 - **Forced alignment** — word-level timestamps via Qwen3-ForcedAligner
 - **Microphone input** — live transcription from system mic
-- **Web UI** — instructor interface with session management, live mic transcription, AI chat, and segment delete/export
-- **Viewer page** — read-only live view for students; receives real-time transcription and partials via SSE, includes AI chat using the instructor's API keys
+- **Web UI** — instructor interface with session management, live mic transcription, AI chat, segment translation, and export
+- **Viewer page** — read-only live view for students; receives real-time transcription, partials, and translations via SSE; includes AI chat using the instructor's API keys
+- **Qwen-VL** — optional vision-language model (`--qwenvl`) for image-aware chat and per-segment auto-translation
 
 ## Models
 
@@ -21,8 +22,9 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 |---|---|---|
 | `Qwen3-ASR-1.7B` | ~3.5 GB | Speech recognition |
 | `Qwen3-ForcedAligner-0.6B` | ~1.2 GB | Word-level timestamps |
+| `Qwen3-VL-2B-Instruct` *(optional)* | ~5 GB | Vision-language chat + translation |
 
-Both are loaded from local directories at startup. ASR inference is handled by [`qwen_asr_inference`](https://github.com/QwenLM/Qwen3-ASR).
+ASR and aligner are loaded from local directories at startup. ASR inference is handled by [`qwen_asr_inference`](https://github.com/QwenLM/Qwen3-ASR). The VL model runs as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 8002).
 
 ## Setup
 
@@ -36,7 +38,9 @@ pip install -r requirements.txt
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python server.py
-CUDA_VISIBLE_DEVICES=0 python server.py --port 9000   # custom port
+CUDA_VISIBLE_DEVICES=0 python server.py --port 9000          # custom port
+CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl             # + Qwen3-VL-2B-Instruct
+CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl Qwen/Qwen2.5-VL-7B-Instruct  # custom VL model
 ```
 
 Poll `GET /health` until `"status": "ready"` before sending requests.
@@ -47,9 +51,11 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 |---|---|---|
 | `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | Local path or HF model ID |
 | `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
-| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~6 GB regardless of GPU size |
-| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL model (`--qwenvl`); auto uses remaining GPU after ASR + aligner |
-| `ASR_PORT` | `8000` | default port; overridden by `--port` CLI arg |
+| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~6 GB |
+| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL model; auto uses free GPU after ASR + aligner (capped at 20 GB) |
+| `VL_MAX_MODEL_LEN` | auto | VL context length; auto-sized from free GPU (max 16384) |
+| `VL_PORT` | `8002` | Internal port for VL subprocess |
+| `ASR_PORT` | `8000` | Default port; overridden by `--port` CLI arg |
 | `ENABLE_ASR_MODEL` | `true` | |
 | `ENABLE_ALIGNER_MODEL` | `true` | |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches context prefix KV blocks across utterances |
@@ -129,59 +135,46 @@ MISTRAL_API_KEY=...        python web_server.py   # Mistral
 Then open `http://localhost:8001` in a browser.
 
 **Instructor page** (`/`) — three-panel layout:
-- **Left** — session list, auto-saved to `localStorage`; double-click to rename; ✕ button deletes individual segments
-- **Middle** — AI chat about the current session's transcription (Claude / Gemini / Mistral)
-- **Right** — live mic transcription with VAD, language selector, PDF/MD context upload, and export button (↓) to download `[timestamp] text` TXT
+- **Left** — session list, auto-saved to `localStorage`; double-click to rename
+- **Middle** — AI chat about the current session's transcription; supports image attachment (🖼) when using Local VL
+- **Right** — live mic transcription with VAD; language selector; auto-translation to target language (shown next to language selector when VL is available); PDF/MD context upload; export (↓)
+
+**Auto-translation**: when a target language different from the source is selected, each new transcription segment is automatically translated after it arrives. The `⇄ Translate` / `✕ Delete` buttons appear at the bottom-right of each entry on hover. Translations are broadcast to viewers.
+
+**Image chat**: select `Local VL` in the model dropdown, attach an image (🖼), and ask a question. The image thumbnail is shown in the chat history and can be clicked to enlarge.
 
 > **Microphone** requires a secure context. Access via `http://localhost:8001`, not an IP address over HTTP. For remote access, use HTTPS (self-signed cert with `openssl req -x509 ...`).
+
+**Remote access via SSH tunnel** (single port, no VL port needed):
+
+```bash
+ssh -p <port> -L 8000:localhost:9002 user@remote-host
+```
+
+All VL traffic is proxied through the main server (`/vl/proxy/...`), so only one tunnel is needed.
 
 ### 6. Viewer page (live lecture feed)
 
 Students open `http://[your-ip]:8001/viewer` on the same network.
 
 - **Left** — AI chat (uses the instructor's API keys; students need no accounts)
-- **Right** — live transcription, updated in real-time via SSE including partial text as the model decodes
+- **Right** — live transcription updated in real-time via SSE, including partial text and translations
 
-The instructor's page automatically pushes each new segment and partial result to `web_server.py`, which relays them to all connected viewers. Session state is held in memory — restarting `web_server.py` clears it, viewers reconnect automatically.
+The instructor's page automatically pushes each new segment (with translation if enabled) to `web_server.py`, which relays them to all connected viewers. Session state is held in memory — restarting `web_server.py` clears it; viewers reconnect automatically.
 
 #### Same-network access (simple)
 
 Students browse to `http://[instructor-local-ip]:8001/viewer`. Find your local IP with `ip route get 1` or `hostname -I`.
 
-> Many public/university WiFi networks enable **AP isolation**, which blocks device-to-device traffic even on the same SSID. If students can't reach the page, use the SSH tunnel approach below.
+> Many public/university WiFi networks enable **AP isolation**, which blocks device-to-device traffic. If students can't reach the page, use the SSH tunnel approach below.
 
 #### Remote access via SSH reverse tunnel (recommended for classroom WiFi)
-
-On your laptop, open a persistent reverse tunnel to an internet-accessible server:
 
 ```bash
 ssh -R 0.0.0.0:8001:localhost:8001 -i ~/.ssh/your-key.pem ubuntu@<relay-server-ip>
 ```
 
-This forwards `<relay-server-ip>:8001` through to your local `web_server.py`. Keep the terminal open during class. Students then open:
-
-```
-http://<relay-server-ip>:8001/viewer
-```
-
-**One-time relay server setup** (AWS EC2 or any VPS):
-
-```bash
-# 1. Allow the port in the OS firewall
-sudo ufw allow 8001
-
-# 2. Enable GatewayPorts so the tunnel binds to 0.0.0.0, not just 127.0.0.1
-echo 'GatewayPorts clientspecified' | sudo tee -a /etc/ssh/sshd_config
-sudo systemctl restart ssh      # Ubuntu: "ssh", not "sshd"
-
-# 3. Verify
-sudo sshd -T | grep gatewayports
-# → gatewayports clientspecified
-```
-
-For **AWS EC2**: also open port 8001 in the instance's **Security Group inbound rules** (AWS Console → EC2 → Security → Edit inbound rules → Custom TCP 8001 0.0.0.0/0). `ufw` alone is not enough on EC2 — the security group is enforced before traffic reaches the instance.
-
-For a more resilient tunnel that auto-reconnects on drop:
+Students open `http://<relay-server-ip>:8001/viewer`. For a resilient tunnel that auto-reconnects:
 
 ```bash
 autossh -M 0 -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" \
@@ -189,27 +182,26 @@ autossh -M 0 -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" \
   -R 0.0.0.0:8001:localhost:8001 -i ~/.ssh/your-key.pem ubuntu@<relay-server-ip> -N
 ```
 
+**One-time relay server setup** (AWS EC2 or any VPS):
+
+```bash
+sudo ufw allow 8001
+echo 'GatewayPorts clientspecified' | sudo tee -a /etc/ssh/sshd_config
+sudo systemctl restart ssh
+```
+
+For AWS EC2: also open port 8001 in the instance's **Security Group inbound rules**.
+
 ## HTTP API
 
 ### `POST /transcribe`
 
-Upload one or more audio files for batch transcription.
-
 ```bash
 curl -F "files=@audio.wav" "http://localhost:8000/transcribe?language=English"
-
-# With word-level timestamps
 curl -F "files=@audio.wav" "http://localhost:8000/transcribe?language=English&forced_alignment=true"
 ```
 
-Response:
-```json
-[{"text": "Hello world.", "language": "English"}]
-```
-
 ### `WS /transcribe-streaming`
-
-WebSocket streaming endpoint. Send a `start` control message, then raw PCM frames, then `stop`.
 
 ```
 → {"type": "start", "format": "pcm_s16le", "sample_rate_hz": 16000, "context": "...optional..."}
@@ -219,8 +211,16 @@ WebSocket streaming endpoint. Send a `start` control message, then raw PCM frame
 ← {"type": "final",   "text": "...", "language": "English"}
 ```
 
+### `GET /vl/health`
+
+Returns VL server status: `{"enabled": true, "model": "Qwen/Qwen3-VL-2B-Instruct", "port": 8002}`.
+
+### `POST /vl/proxy/{path}`
+
+Proxies requests to the internal VL server. Used by `web_server.py` so clients only need one open port.
+
 ## Supported Languages
 
 English, Chinese, Cantonese, Japanese, Korean, Arabic, German, French, Spanish, Portuguese, Indonesian, Italian, Russian, Thai, Vietnamese, Turkish, Hindi, Malay, Dutch, Swedish, Danish, Finnish, Polish, Persian, Greek, Romanian, Hungarian, Macedonian.
 
-Pass the **full name** (e.g. `--language Chinese`, not `--language zh`) for `client_file.py`. Both short codes and full names work for `client_mic.py`.
+Pass the **full name** (e.g. `--language Chinese`) for `client_file.py`. Both short codes and full names work for `client_mic.py`.
