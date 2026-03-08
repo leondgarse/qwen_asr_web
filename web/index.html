@@ -164,18 +164,18 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
 /* Transcription output */
 #tr-output { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
 .tr-entry { background: var(--bg3); border-radius: 8px; padding: 8px 10px;
-            border-left: 3px solid var(--accent); display: flex; align-items: flex-start; gap: 6px; }
-.tr-body  { flex: 1; min-width: 0; }
+            border-left: 3px solid var(--accent); }
+.tr-body  { min-width: 0; }
 .tr-ts  { font-size: 11px; color: var(--muted); margin-bottom: 3px; font-variant-numeric: tabular-nums; }
 .tr-txt { line-height: 1.5; }
-.tr-del { opacity: 0; background: none; border: none; color: var(--red); cursor: pointer;
-          font-size: 14px; padding: 0 2px; line-height: 1; flex-shrink: 0; margin-top: 1px;
-          transition: opacity .15s; }
-.tr-entry:hover .tr-del { opacity: 1; }
-.tr-translate { opacity: 0; background: none; border: none; color: var(--muted); cursor: pointer;
-                font-size: 13px; padding: 0 2px; line-height: 1; flex-shrink: 0; margin-top: 1px;
-                transition: opacity .15s; }
-.tr-entry:hover .tr-translate { opacity: 1; }
+.tr-actions { display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity .15s; }
+.tr-entry:hover .tr-actions { opacity: 1; }
+.tr-del { background: none; border: none; color: var(--red); cursor: pointer;
+          font-size: 12px; padding: 1px 6px; line-height: 1; border-radius: 4px; }
+.tr-del:hover { background: var(--bg2); }
+.tr-translate { background: none; border: none; color: var(--muted); cursor: pointer;
+                font-size: 12px; padding: 1px 6px; line-height: 1; border-radius: 4px; }
+.tr-translate:hover { color: var(--text); background: var(--bg2); }
 .tr-translated { font-size: 13px; color: var(--muted); font-style: italic;
                  margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
 #partial-entry { background: var(--bg3); border-radius: 8px; padding: 8px 10px;
@@ -585,9 +585,10 @@ function makeTrEntry(entry, idx) {
   div.className='tr-entry';
   div.innerHTML=`<div class="tr-body"><div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`
     +(entry.translated ? `<div class="tr-translated">${esc(entry.translated)}</div>` : '')
-    +`</div>`
-    +(vlAvailable ? `<button class="tr-translate" onclick="translateSegment(this,${idx})" title="Translate">⇄</button>` : '')
-    +`<button class="tr-del" onclick="deleteSegment(${idx})" title="Delete">✕</button>`;
+    +`<div class="tr-actions">`
+    +(vlAvailable ? `<button class="tr-translate" onclick="translateSegment(this,${idx})" title="Translate">⇄ Translate</button>` : '')
+    +`<button class="tr-del" onclick="deleteSegment(${idx})" title="Delete">✕ Delete</button>`
+    +`</div></div>`;
   return div;
 }
 async function translateSegment(btn, idx) {
@@ -600,13 +601,13 @@ async function translateSegment(btn, idx) {
     if(!resp.ok) throw new Error(await resp.text());
     const {translated}=await resp.json();
     s.transcription[idx].translated = translated;
-    saveState();
-    const body=btn.closest('.tr-entry').querySelector('.tr-body');
+    saveState(); pushToServer();
+    const body=btn.closest('.tr-body');
     let el=body.querySelector('.tr-translated');
-    if(!el){el=document.createElement('div');el.className='tr-translated';body.appendChild(el);}
+    if(!el){el=document.createElement('div');el.className='tr-translated';body.querySelector('.tr-actions').before(el);}
     el.textContent=translated;
   } catch(e){ console.error('Translation error:',e); }
-  btn.disabled=false; btn.textContent='⇄';
+  btn.disabled=false; btn.textContent='⇄ Translate';
 }
 function shouldAutoTranslate() {
   if (!vlAvailable) return false;
@@ -623,7 +624,7 @@ async function autoTranslateEntry(entryEl, entry) {
     if (!resp.ok) return;
     const {translated} = await resp.json();
     entry.translated = translated;
-    saveState();
+    saveState(); pushToServer();
     const body = entryEl.querySelector('.tr-body');
     let el = body.querySelector('.tr-translated');
     if (!el) { el=document.createElement('div'); el.className='tr-translated'; body.appendChild(el); }
