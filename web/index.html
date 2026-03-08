@@ -134,6 +134,8 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
 #lang-row { display: flex; align-items: center; gap: 8px; }
 #lang-select { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
                border-radius: 6px; padding: 4px 8px; font-size: 13px; flex: 1; }
+#translate-lang-main { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+                       border-radius: 6px; padding: 4px 6px; font-size: 13px; }
 
 /* Mic button */
 #mic-area { padding: 14px; border-bottom: 1px solid var(--border); }
@@ -226,7 +228,7 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
     <div id="tr-hd">
       <div id="tr-hd-row">
         <h3>Live Transcription</h3>
-        <select id="translate-lang" title="Translation target language">
+        <select id="translate-lang" title="Translation target language" style="display:none">
           <option value="English">→ EN</option>
           <option value="Chinese">→ ZH</option>
           <option value="Japanese">→ JA</option>
@@ -262,6 +264,18 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 14px;
           <option value="Spanish">Spanish</option>
           <option value="">Auto-detect</option>
         </select>
+        <span id="translate-lang-wrap" style="display:none; align-items:center; gap:4px;">
+          <span style="font-size:12px; color:var(--muted);">→</span>
+          <select id="translate-lang-main" title="Auto-translate to">
+            <option value="English">EN</option>
+            <option value="Chinese">ZH</option>
+            <option value="Japanese">JA</option>
+            <option value="Korean">KO</option>
+            <option value="German">DE</option>
+            <option value="French">FR</option>
+            <option value="Spanish">ES</option>
+          </select>
+        </span>
       </div>
     </div>
 
@@ -580,7 +594,7 @@ async function translateSegment(btn, idx) {
   const s=getSession(); if(!s||!s.transcription[idx]) return;
   btn.disabled=true; btn.textContent='…';
   try {
-    const lang=document.getElementById('translate-lang').value;
+    const lang=document.getElementById('translate-lang-main').value;
     const resp=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({text:s.transcription[idx].text, target_language:lang})});
     if(!resp.ok) throw new Error(await resp.text());
@@ -596,13 +610,13 @@ async function translateSegment(btn, idx) {
 }
 function shouldAutoTranslate() {
   if (!vlAvailable) return false;
-  const target = document.getElementById('translate-lang').value;
+  const target = document.getElementById('translate-lang-main').value;
   const source = document.getElementById('lang-select').value;
   return target !== source;
 }
 async function autoTranslateEntry(entryEl, entry) {
   if (!shouldAutoTranslate()) return;
-  const lang = document.getElementById('translate-lang').value;
+  const lang = document.getElementById('translate-lang-main').value;
   try {
     const resp = await fetch('/api/translate', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({text: entry.text, target_language: lang})});
@@ -951,7 +965,7 @@ document.getElementById('chat-img-clear').addEventListener('click', () => {
     vlAvailable = data.models.some(m => m.id === 'local-vl');
     console.log('[models] fetched:', data.models.map(m=>m.id), '| vlAvailable:', vlAvailable);
     if (vlAvailable) {
-      document.getElementById('translate-lang').style.display = '';
+      document.getElementById('translate-lang-wrap').style.display = 'flex';
       renderTranscriptionPanel();  // re-render so existing segments get the ⇄ button
     }
     updateImgBtn();
