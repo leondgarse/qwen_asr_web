@@ -22,10 +22,10 @@ _parser.add_argument(
     metavar="MODEL",
     help="Enable Qwen-VL model (optional model name, default: Qwen2.5-VL-3B-Instruct)",
 )
-_parser.add_argument("--port", type=int, default=int(os.getenv("ASR_PORT", "8000")), help="Port to listen on (default: 8000)")
+_parser.add_argument("--port", type=int, default=int(os.getenv("ASR_PORT", "9002")), help="Port to listen on (default: 9002)")
 _cli, _ = _parser.parse_known_args()
 VL_MODEL_NAME = _cli.qwenvl or os.getenv("VL_MODEL_NAME", "")
-VL_PORT = int(os.getenv("VL_PORT", "8002"))
+VL_PORT = int(os.getenv("VL_PORT", "9004"))
 
 import uvicorn
 import numpy as np

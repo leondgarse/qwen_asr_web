@@ -24,7 +24,7 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 | `Qwen3-ForcedAligner-0.6B` | ~1.2 GB | Word-level timestamps |
 | `Qwen3-VL-2B-Instruct` *(optional)* | ~5 GB | Vision-language chat + translation |
 
-ASR and aligner are loaded from local directories at startup. ASR inference is handled by [`qwen_asr_inference`](https://github.com/QwenLM/Qwen3-ASR). The VL model runs as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 8002).
+ASR and aligner are loaded from local directories at startup. ASR inference is handled by [`qwen_asr_inference`](https://github.com/QwenLM/Qwen3-ASR). The VL model runs as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 9004).
 
 ## Setup
 
@@ -54,8 +54,8 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 | `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~6 GB |
 | `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL model; auto uses free GPU after ASR + aligner (capped at 20 GB) |
 | `VL_MAX_MODEL_LEN` | auto | VL context length; auto-sized from free GPU (max 16384) |
-| `VL_PORT` | `8002` | Internal port for VL subprocess |
-| `ASR_PORT` | `8000` | Default port; overridden by `--port` CLI arg |
+| `VL_PORT` | `9004` | Internal port for VL subprocess |
+| `ASR_PORT` | `9002` | Default port; overridden by `--port` CLI arg |
 | `ENABLE_ASR_MODEL` | `true` | |
 | `ENABLE_ALIGNER_MODEL` | `true` | |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches context prefix KV blocks across utterances |
@@ -94,11 +94,11 @@ input audio
 ### 3. Live microphone transcription
 
 ```bash
-python client_mic.py                       # English, localhost:8000
+python client_mic.py                       # English, localhost:9002
 python client_mic.py -l zh                 # Chinese
 python client_mic.py -l English            # full name also works
 python client_mic.py -v                    # verbose VAD debug output
-python client_mic.py -e ws://host:8000/transcribe-streaming  # remote server
+python client_mic.py -e ws://host:9002/transcribe-streaming  # remote server
 ```
 
 Speak into the mic; each detected utterance is transcribed and printed with a timestamp. Press `Ctrl+C` to stop.
@@ -148,7 +148,7 @@ Then open `http://localhost:8001` in a browser.
 **Remote access via SSH tunnel** (single port, no VL port needed):
 
 ```bash
-ssh -p <port> -L 8000:localhost:9002 user@remote-host
+ssh -p <port> -L 9002:localhost:9002 user@remote-host
 ```
 
 All VL traffic is proxied through the main server (`/vl/proxy/...`), so only one tunnel is needed.
@@ -197,8 +197,8 @@ For AWS EC2: also open port 8001 in the instance's **Security Group inbound rule
 ### `POST /transcribe`
 
 ```bash
-curl -F "files=@audio.wav" "http://localhost:8000/transcribe?language=English"
-curl -F "files=@audio.wav" "http://localhost:8000/transcribe?language=English&forced_alignment=true"
+curl -F "files=@audio.wav" "http://localhost:9002/transcribe?language=English"
+curl -F "files=@audio.wav" "http://localhost:9002/transcribe?language=English&forced_alignment=true"
 ```
 
 ### `WS /transcribe-streaming`
@@ -213,7 +213,7 @@ curl -F "files=@audio.wav" "http://localhost:8000/transcribe?language=English&fo
 
 ### `GET /vl/health`
 
-Returns VL server status: `{"enabled": true, "model": "Qwen/Qwen3-VL-2B-Instruct", "port": 8002}`.
+Returns VL server status: `{"enabled": true, "model": "Qwen/Qwen3-VL-2B-Instruct", "port": 9004}`.
 
 ### `POST /vl/proxy/{path}`
 

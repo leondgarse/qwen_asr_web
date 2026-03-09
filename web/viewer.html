@@ -353,6 +353,71 @@ body::after {
 #send-btn:active { transform: scale(.97); }
 #send-btn:disabled { opacity: .3; cursor: default; }
 
+/* ── Settings panel (API keys) ── */
+#settings-btn {
+  background: none; border: none;
+  color: var(--muted); cursor: pointer;
+  font-size: 16px; padding: 4px 7px;
+  border-radius: 6px; line-height: 1;
+  transition: color .15s, background .15s;
+}
+#settings-btn:hover { color: var(--text); background: var(--bg3); }
+#keys-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px); right: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 280px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.15);
+  z-index: 200;
+  flex-direction: column;
+  gap: 8px;
+}
+#keys-panel.open { display: flex; }
+#keys-panel h4 {
+  font-family: 'Syne', sans-serif;
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .12em;
+  color: var(--muted); margin-bottom: 4px;
+}
+#keys-panel label { font-size: 12px; color: var(--muted); }
+#keys-panel input[type="password"] {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 12px; font-family: 'Space Mono', monospace;
+  outline: none;
+  transition: border-color .15s;
+}
+#keys-panel input[type="password"]:focus { border-color: var(--accent); }
+#keys-save-btn {
+  background: var(--accent); color: #fff;
+  border: none; border-radius: 8px;
+  padding: 8px 14px; cursor: pointer;
+  font-family: 'Syne', sans-serif;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; margin-top: 4px;
+  transition: opacity .15s;
+}
+#keys-save-btn:hover { opacity: .85; }
+
+/* ── Mermaid diagrams ── */
+.mermaid-wrap {
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: .6em 0;
+  border: 1px solid var(--border2);
+  text-align: center;
+}
+.mermaid-wrap svg { max-width: 100%; height: auto; }
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -377,6 +442,19 @@ body::after {
     <div id="chat-hd">
       <h2>Ask about the lecture</h2>
       <select id="model-select"><option value="auto">Loading models…</option></select>
+      <div style="position:relative">
+        <button id="settings-btn" title="API key settings">⚙</button>
+        <div id="keys-panel">
+          <h4>API Keys (stored locally)</h4>
+          <label>Claude (Anthropic)</label>
+          <input id="key-claude" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+          <label>Gemini (Google)</label>
+          <input id="key-gemini" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false">
+          <label>Mistral</label>
+          <input id="key-mistral" type="password" placeholder="…" autocomplete="off" spellcheck="false">
+          <button id="keys-save-btn">Save &amp; Apply</button>
+        </div>
+      </div>
     </div>
     <div id="messages">
       <div id="chat-placeholder">Ask a question about what was said.</div>
@@ -411,6 +489,7 @@ body::after {
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════
 // State
@@ -424,6 +503,43 @@ function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 function renderMd(s) { return typeof marked !== 'undefined' ? marked.parse(s) : esc(s).replace(/\n/g,'<br>'); }
 function fmtTime(d=new Date()) { return d.toTimeString().slice(0,8); }
 function scrollBottom(el) { el.scrollTop = el.scrollHeight; }
+
+// ═══════════════════════════════════════════════════════════
+// Mermaid
+// ═══════════════════════════════════════════════════════════
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+}
+let _mermaidTimer = null;
+function scheduleRenderMermaid(container) {
+  if (typeof mermaid === 'undefined') return;
+  if (_mermaidTimer) clearTimeout(_mermaidTimer);
+  _mermaidTimer = setTimeout(() => {
+    _mermaidTimer = null;
+    container.querySelectorAll('pre code.language-mermaid').forEach(async code => {
+      const pre = code.parentElement;
+      if (!pre || pre.dataset.mmdDone) return;
+      pre.dataset.mmdDone = '1';
+      try {
+        const { svg } = await mermaid.render('mmd-' + Math.random().toString(36).slice(2, 9), code.textContent.trim());
+        const wrap = document.createElement('div');
+        wrap.className = 'mermaid-wrap';
+        wrap.innerHTML = svg;
+        pre.replaceWith(wrap);
+      } catch(e) { console.warn('Mermaid render error:', e); }
+    });
+  }, 250);
+}
+
+// ═══════════════════════════════════════════════════════════
+// API key management (viewer-local, stored in localStorage)
+// ═══════════════════════════════════════════════════════════
+function getApiKeys() {
+  try { return JSON.parse(localStorage.getItem('viewer_api_keys') || '{}'); } catch { return {}; }
+}
+function saveApiKeys(keys) {
+  localStorage.setItem('viewer_api_keys', JSON.stringify(keys));
+}
 
 // ═══════════════════════════════════════════════════════════
 // SSE — live transcription feed
@@ -567,6 +683,7 @@ function renderChat() {
       <div class="msg-time">${m.time || ''}</div>
     </div>`).join('');
   scrollBottom(box);
+  scheduleRenderMermaid(box);
 }
 
 async function sendChatMessage() {
@@ -598,6 +715,7 @@ async function sendChatMessage() {
         transcription: getTranscriptionText(),
         model: selectedModel,
         image: imageToSend,
+        api_keys: getApiKeys(),
       }),
     });
 
@@ -623,6 +741,7 @@ async function sendChatMessage() {
     renderChat();
   } finally {
     btn.disabled = false;
+    scheduleRenderMermaid(document.getElementById('messages'));
   }
 }
 
@@ -694,7 +813,7 @@ connect();
 
 (async function fetchModels() {
   try {
-    const resp = await fetch('/api/models');
+    const resp = await fetch('/api/models?all=true');
     const data = await resp.json();
     const sel  = document.getElementById('model-select');
     if (!data.models || !data.models.length) {
@@ -704,6 +823,33 @@ connect();
     sel.innerHTML = data.models.map(m => `<option value="${m.id}">${esc(m.label)}</option>`).join('');
   } catch {}
 })();
+
+// ── Settings panel (API keys) ─────────────────────────────
+document.getElementById('settings-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  const panel = document.getElementById('keys-panel');
+  if (!panel.classList.contains('open')) {
+    const keys = getApiKeys();
+    document.getElementById('key-claude').value  = keys.claude  || '';
+    document.getElementById('key-gemini').value  = keys.gemini  || '';
+    document.getElementById('key-mistral').value = keys.mistral || '';
+  }
+  panel.classList.toggle('open');
+});
+document.getElementById('keys-save-btn').addEventListener('click', () => {
+  saveApiKeys({
+    claude:  document.getElementById('key-claude').value.trim(),
+    gemini:  document.getElementById('key-gemini').value.trim(),
+    mistral: document.getElementById('key-mistral').value.trim(),
+  });
+  document.getElementById('keys-panel').classList.remove('open');
+});
+document.addEventListener('click', e => {
+  const panel = document.getElementById('keys-panel');
+  if (panel.classList.contains('open') && !panel.contains(e.target)) {
+    panel.classList.remove('open');
+  }
+});
 </script>
 </body>
 </html>

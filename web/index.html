@@ -643,6 +643,18 @@ body::after {
   line-height: 2;
 }
 
+/* ── Mermaid diagrams ── */
+.mermaid-wrap {
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: .6em 0;
+  border: 1px solid var(--border2);
+  text-align: center;
+}
+.mermaid-wrap svg { max-width: 100%; height: auto; }
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -708,7 +720,7 @@ body::after {
         <div id="srv-row">
           <input id="srv-host" placeholder="localhost" spellcheck="false">
           <span style="color:var(--muted)">:</span>
-          <input id="srv-port" placeholder="8000" spellcheck="false">
+          <input id="srv-port" placeholder="9002" spellcheck="false">
           <button id="srv-apply">Apply</button>
         </div>
         <div id="srv-current"></div>
@@ -765,13 +777,41 @@ body::after {
 
 </div>
 <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
+// ═══════════════════════════════════════════════════════════
+// Mermaid
+// ═══════════════════════════════════════════════════════════
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+}
+let _mermaidTimer = null;
+function scheduleRenderMermaid(container) {
+  if (typeof mermaid === 'undefined') return;
+  if (_mermaidTimer) clearTimeout(_mermaidTimer);
+  _mermaidTimer = setTimeout(() => {
+    _mermaidTimer = null;
+    container.querySelectorAll('pre code.language-mermaid').forEach(async code => {
+      const pre = code.parentElement;
+      if (!pre || pre.dataset.mmdDone) return;
+      pre.dataset.mmdDone = '1';
+      try {
+        const { svg } = await mermaid.render('mmd-' + Math.random().toString(36).slice(2, 9), code.textContent.trim());
+        const wrap = document.createElement('div');
+        wrap.className = 'mermaid-wrap';
+        wrap.innerHTML = svg;
+        pre.replaceWith(wrap);
+      } catch(e) { console.warn('Mermaid render error:', e); }
+    });
+  }, 250);
+}
+
 // ═══════════════════════════════════════════════════════════
 // Server config (persisted to localStorage)
 // ═══════════════════════════════════════════════════════════
 function getServerBase() {
   const host = localStorage.getItem('asr_host') || 'localhost';
-  const port = localStorage.getItem('asr_port') || '8000';
+  const port = localStorage.getItem('asr_port') || '9002';
   return { host, port };
 }
 function asrWsUrl()   { const {host,port} = getServerBase(); return `ws://${host}:${port}/transcribe-streaming`; }
@@ -794,7 +834,7 @@ function updateSrvLabel() {
 
 document.getElementById('srv-apply').addEventListener('click', () => {
   const host = document.getElementById('srv-host').value.trim() || 'localhost';
-  const port = document.getElementById('srv-port').value.trim() || '8000';
+  const port = document.getElementById('srv-port').value.trim() || '9002';
   localStorage.setItem('asr_host', host);
   localStorage.setItem('asr_port', port);
   updateSrvLabel();
@@ -961,6 +1001,7 @@ function renderChat() {
       <div class="msg-time">${m.time||''}</div>
     </div>`).join('');
   scrollBottom(box);
+  scheduleRenderMermaid(box);
 }
 
 async function sendChatMessage() {
@@ -1025,6 +1066,7 @@ async function sendChatMessage() {
     renderChat();
   } finally {
     saveState(); btn.disabled=false;
+    scheduleRenderMermaid(document.getElementById('messages'));
   }
 }
 

@@ -20,7 +20,7 @@ def extract_audio(video_path, audio_path):
         sys.exit(1)
 
 
-def wait_for_server(url="http://localhost:8000/health"):
+def wait_for_server(url="http://localhost:9002/health"):
     print("[*] Waiting for the server model to load and become ready...")
     while True:
         try:
@@ -38,7 +38,7 @@ def wait_for_server(url="http://localhost:8000/health"):
         time.sleep(5)
 
 
-def transcribe_audio(audio_path, output_path, server_url="http://localhost:8000/transcribe"):
+def transcribe_audio(audio_path, output_path, server_url="http://localhost:9002/transcribe"):
     print(f"[*] Sending '{audio_path}' to server for transcription...")
     print("[-] This may take a while depending on the length of the audio. Please wait...")
 
@@ -59,7 +59,7 @@ def main():
     parser.add_argument("video_path", help="Path to the input video file (e.g., input.mp4)")
     parser.add_argument("--audio-out", default="temp_audio.wav", help="Temporary audio extraction path")
     parser.add_argument("--text-out", default="transcription.json", help="Output JSON path for the results")
-    parser.add_argument("--port", type=int, default=8000, help="Port to run the transcription server on")
+    parser.add_argument("--port", type=int, default=9002, help="Port to run the transcription server on")
     parser.add_argument("--keep-audio", action="store_true", help="Do not delete the temporary audio file after processing")
     args = parser.parse_args()
 

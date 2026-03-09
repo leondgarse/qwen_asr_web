@@ -1,7 +1,7 @@
 """
 Web UI server for Qwen3-ASR Studio.
 Serves the frontend and provides /api/chat (Claude / Gemini / Mistral) + /api/extract-context (PDF/MD).
-The transcription WebSocket connects directly to the ASR server at localhost:8000.
+The transcription WebSocket connects directly to the ASR server at localhost:9002.
 
 Usage:
     # Set one or more API keys, then start:
@@ -55,7 +55,7 @@ async def _notify_viewers(payload: str) -> None:
 
 # ── ASR / VL server config ────────────────────────────────────
 ASR_HOST = os.getenv("ASR_HOST", "localhost")
-ASR_PORT = int(os.getenv("ASR_PORT", "8000"))
+ASR_PORT = int(os.getenv("ASR_PORT", "9002"))
 
 _vl_checked = False  # True once we got a definitive "enabled" answer
 _vl_available = False
@@ -158,6 +158,7 @@ class ChatReq(BaseModel):
     model: str = "auto"  # "auto" picks first available
     image: str = ""  # base64-encoded image; used only with local-vl model
     image_mime: str = "image/jpeg"
+    api_keys: dict = {}  # client-provided keys keyed by model id (e.g. {"claude": "sk-..."})
 
 
 class TranslateReq(BaseModel):
@@ -238,8 +239,11 @@ async def stream_session(request: Request):
 
 
 @app.get("/api/models")
-async def list_models():
-    result = available_models()
+async def list_models(all: bool = False):
+    if all:
+        result = [{"id": k, "label": v["label"]} for k, v in MODELS.items()]
+    else:
+        result = available_models()
     if await _check_vl():
         label = (_vl_info.get("model") or "").split("/")[-1] or "Qwen-VL"
         result.insert(0, {"id": "local-vl", "label": f"Local VL ({label})"})
@@ -249,14 +253,26 @@ async def list_models():
 @app.post("/api/chat")
 async def chat(req: ChatReq):
     vl_ok = await _check_vl()
-    avail = available_models()
-    all_ids = [m["id"] for m in avail] + (["local-vl"] if vl_ok else [])
-    if not all_ids:
+
+    def resolve_key(model_id: str) -> str:
+        """Return client-provided key if set, else fall back to env var."""
+        client_key = req.api_keys.get(model_id, "").strip()
+        if client_key:
+            return client_key
+        info = MODELS.get(model_id, {})
+        return os.getenv(info.get("env_key", ""), "")
+
+    avail_ids = [k for k in MODELS if resolve_key(k)] + (["local-vl"] if vl_ok else [])
+    if not avail_ids:
         raise HTTPException(503, detail="No LLM available. Set an API key or start server.py with --qwenvl.")
 
-    model_id = req.model if req.model != "auto" else all_ids[0]
+    model_id = req.model if req.model != "auto" else avail_ids[0]
 
-    system_parts = ["You are a helpful assistant. Help the user understand and review a speech transcription."]
+    system_parts = [
+        "You are a helpful assistant. Help the user understand and review a speech transcription. "
+        "When summarizing or explaining structure, timelines, relationships, or processes, include a "
+        "Mermaid diagram in a ```mermaid code block if it would help clarify the content."
+    ]
     if req.transcription:
         system_parts.append(f"Current transcription:\n{req.transcription}")
     if req.context:
@@ -273,15 +289,16 @@ async def chat(req: ChatReq):
 
     if model_id not in MODELS:
         raise HTTPException(400, detail=f"Unknown model: {model_id}")
-    if not os.getenv(MODELS[model_id]["env_key"]):
-        raise HTTPException(503, detail=f"API key not set: {MODELS[model_id]['env_key']}")
+    api_key = resolve_key(model_id)
+    if not api_key:
+        raise HTTPException(503, detail=f"No API key for {model_id}. Set {MODELS[model_id]['env_key']} or enter it in settings.")
 
     if model_id == "claude":
-        return StreamingResponse(_stream_claude(system_text, msgs), media_type="text/event-stream")
+        return StreamingResponse(_stream_claude(system_text, msgs, api_key), media_type="text/event-stream")
     elif model_id == "gemini":
-        return StreamingResponse(_stream_gemini(system_text, msgs), media_type="text/event-stream")
+        return StreamingResponse(_stream_gemini(system_text, msgs, api_key), media_type="text/event-stream")
     elif model_id == "mistral":
-        return StreamingResponse(_stream_mistral(system_text, msgs), media_type="text/event-stream")
+        return StreamingResponse(_stream_mistral(system_text, msgs, api_key), media_type="text/event-stream")
 
 
 @app.post("/api/translate")
@@ -352,7 +369,7 @@ async def _stream_local_vl(system: str, msgs: list, image: str = "", image_mime:
 
 
 # ── Claude ───────────────────────────────────────────────────
-def _stream_claude(system: str, msgs: list):
+def _stream_claude(system: str, msgs: list, api_key: str = ""):
     try:
         import anthropic
     except ImportError:
@@ -361,7 +378,7 @@ def _stream_claude(system: str, msgs: list):
         return
 
     try:
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
         with client.messages.stream(
             model=MODELS["claude"]["default_model"],
             max_tokens=1024,
@@ -377,7 +394,7 @@ def _stream_claude(system: str, msgs: list):
 
 
 # ── Gemini ───────────────────────────────────────────────────
-def _stream_gemini(system: str, msgs: list):
+def _stream_gemini(system: str, msgs: list, api_key: str = ""):
     try:
         from google import genai
     except ImportError:
@@ -386,7 +403,7 @@ def _stream_gemini(system: str, msgs: list):
         return
 
     try:
-        client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+        client = genai.Client(api_key=api_key or os.environ.get("GOOGLE_API_KEY", ""))
 
         # Build contents: system instruction + conversation history
         contents = []
@@ -412,7 +429,7 @@ def _stream_gemini(system: str, msgs: list):
 
 
 # ── Mistral ──────────────────────────────────────────────────
-def _stream_mistral(system: str, msgs: list):
+def _stream_mistral(system: str, msgs: list, api_key: str = ""):
     try:
         from mistralai import Mistral
     except ImportError:
@@ -421,7 +438,7 @@ def _stream_mistral(system: str, msgs: list):
         return
 
     try:
-        client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+        client = Mistral(api_key=api_key or os.environ.get("MISTRAL_API_KEY", ""))
         # Mistral rejects assistant messages with None/empty content
         clean_msgs = [m for m in msgs if m.get("content") is not None]
         full_msgs = [{"role": "system", "content": system}] + clean_msgs
@@ -464,7 +481,7 @@ async def extract_context(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     print("Qwen3-ASR Studio  →  http://localhost:8001")
-    print("ASR server must be running on localhost:8000")
+    print("ASR server must be running on localhost:9002")
     avail = available_models()
     if avail:
         print(f"Chat models available: {', '.join(m['label'] for m in avail)}")

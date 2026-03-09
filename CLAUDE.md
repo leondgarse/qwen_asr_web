@@ -5,9 +5,9 @@ Speech-to-text service using local Qwen3-ASR-1.7B model via vLLM.
 ## Start
 
 ```bash
-python server.py                             # ASR + chat API, binds 0.0.0.0:8000
+python server.py                             # ASR + chat API, binds 0.0.0.0:9002
 python server.py --port 9000                 # custom port
-python server.py --qwenvl                    # + Qwen3-VL-2B-Instruct on VL_PORT (default 8002)
+python server.py --qwenvl                    # + Qwen3-VL-2B-Instruct on VL_PORT (default 9004)
 python server.py --qwenvl Qwen/Model-Name    # custom VL model
 python web_server.py                         # Web UI, binds 0.0.0.0:8001
 ```
@@ -56,7 +56,7 @@ Served at `http://localhost:8001/viewer`.
 
 ## VL Model (`--qwenvl`)
 
-Started as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 8002).
+Started as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 9004).
 
 - GPU memory auto-sized from actual free GPU at startup, capped at `_VL_MAX_GB = 20 GB`
 - `max_model_len` auto-sized from free GPU (16384 if ≥20 GB free, else 8192/4096/2048)
@@ -83,7 +83,7 @@ python client_file.py openclaw.mp3 --context foo.md --language en
 VAD-based real-time microphone transcription. Each detected utterance is sent as a separate WebSocket session.
 
 ```bash
-python client_mic.py                   # English, localhost:8000
+python client_mic.py                   # English, localhost:9002
 python client_mic.py -l zh             # Chinese
 python client_mic.py -v                # verbose VAD debug output
 python client_mic.py -e ws://host:port/transcribe-streaming
@@ -115,12 +115,12 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 | `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR; auto targets ~6 GB |
 | `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; auto = free GPU − 2 GB buffer, capped at 20 GB |
 | `VL_MAX_MODEL_LEN` | auto | VL context length; auto from free GPU, max 16384 |
-| `VL_PORT` | `8002` | Internal port for VL subprocess |
+| `VL_PORT` | `9004` | Internal port for VL subprocess |
 | `MAX_NEW_TOKENS` | `8192` | |
 | `ENABLE_ASR_MODEL` | `true` | set `false` to skip |
 | `ENABLE_ALIGNER_MODEL` | `true` | set `false` to skip |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches KV blocks for shared prefix |
-| `ASR_PORT` | `8000` | default port; overridden by `--port` CLI arg |
+| `ASR_PORT` | `9002` | default port; overridden by `--port` CLI arg |
 
 ## Key Notes
 

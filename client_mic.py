@@ -168,7 +168,7 @@ async def transcription_loop(segment_queue: asyncio.Queue, endpoint: str, verbos
 
 async def main():
     parser = argparse.ArgumentParser(description="Qwen3-ASR Real-time Mic Client")
-    parser.add_argument("-e", "--endpoint", default="ws://localhost:8000/transcribe-streaming", help="WebSocket Endpoint URL")
+    parser.add_argument("-e", "--endpoint", default="ws://localhost:9002/transcribe-streaming", help="WebSocket Endpoint URL")
     parser.add_argument("-l", "--language", default=None, help="Language code or full name (e.g. en, English, zh, Chinese)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print VAD debug info (speech triggers, silence counters, etc.)")
     args = parser.parse_args()
