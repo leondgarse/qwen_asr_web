@@ -508,7 +508,8 @@ function scrollBottom(el) { el.scrollTop = el.scrollHeight; }
 // Mermaid
 // ═══════════════════════════════════════════════════════════
 if (typeof mermaid !== 'undefined') {
-  mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+  try { mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' }); }
+  catch(e) { console.warn('Mermaid init failed:', e); }
 }
 let _mermaidTimer = null;
 function scheduleRenderMermaid(container) {

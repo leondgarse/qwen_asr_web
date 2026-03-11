@@ -609,6 +609,24 @@ body::after {
   transition: background .12s;
 }
 .tr-del:hover { background: rgba(239, 68, 68, 0.1); }
+.tr-edit {
+  background: none; border: none;
+  color: var(--muted); cursor: pointer;
+  font-size: 11px; padding: 2px 6px;
+  line-height: 1.4; border-radius: 4px;
+  font-family: 'Outfit', sans-serif;
+  transition: background .12s, color .12s;
+}
+.tr-edit:hover { color: var(--text); background: var(--bg4); }
+.tr-txt[contenteditable="true"] {
+  outline: none;
+  background: var(--bg2);
+  border-radius: 4px;
+  padding: 2px 5px;
+  margin: -2px -5px;
+  box-shadow: 0 0 0 2px var(--accent);
+  white-space: pre-wrap;
+}
 .tr-translate {
   background: none; border: none;
   color: var(--muted); cursor: pointer;
@@ -783,7 +801,8 @@ body::after {
 // Mermaid
 // ═══════════════════════════════════════════════════════════
 if (typeof mermaid !== 'undefined') {
-  mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+  try { mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' }); }
+  catch(e) { console.warn('Mermaid init failed:', e); }
 }
 let _mermaidTimer = null;
 function scheduleRenderMermaid(container) {
@@ -1093,6 +1112,7 @@ function makeTrEntry(entry, idx) {
     +(entry.translated ? `<div class="tr-translated">${esc(entry.translated)}</div>` : '')
     +`<div class="tr-actions">`
     +(vlAvailable ? `<button class="tr-translate" onclick="translateSegment(this,${idx})" title="Translate">⇄ Translate</button>` : '')
+    +`<button class="tr-edit" onclick="editSegment(${idx})" title="Edit">✎ Edit</button>`
     +`<button class="tr-del" onclick="deleteSegment(${idx})" title="Delete">✕ Delete</button>`
     +`</div></div>`;
   return div;
@@ -1143,6 +1163,45 @@ function deleteSegment(idx) {
   saveState(); pushToServer();
   renderTranscriptionPanel();
   renderSessions();
+}
+function editSegment(idx) {
+  const s=getSession(); if(!s||!s.transcription[idx]) return;
+  const entries=document.getElementById('tr-output').querySelectorAll('.tr-entry');
+  const el=entries[idx]; if(!el) return;
+  const txtEl=el.querySelector('.tr-txt');
+  const editBtn=el.querySelector('.tr-edit');
+  if(!txtEl||!editBtn||txtEl.contentEditable==='true') return;
+
+  const original=s.transcription[idx].text;
+  txtEl.contentEditable='true';
+  txtEl.focus();
+  // Place cursor at end
+  const range=document.createRange(); range.selectNodeContents(txtEl); range.collapse(false);
+  window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+  editBtn.textContent='✓ Save';
+  editBtn.onclick=()=>saveSegmentEdit(idx);
+  txtEl.onkeydown=e=>{
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();saveSegmentEdit(idx);}
+    if(e.key==='Escape'){
+      txtEl.contentEditable='false'; txtEl.textContent=original;
+      editBtn.textContent='✎ Edit'; editBtn.onclick=()=>editSegment(idx);
+      txtEl.onkeydown=null;
+    }
+  };
+}
+function saveSegmentEdit(idx) {
+  const s=getSession(); if(!s||!s.transcription[idx]) return;
+  const entries=document.getElementById('tr-output').querySelectorAll('.tr-entry');
+  const el=entries[idx]; if(!el) return;
+  const txtEl=el.querySelector('.tr-txt');
+  const editBtn=el.querySelector('.tr-edit');
+  if(!txtEl) return;
+  const newText=txtEl.textContent.trim();
+  txtEl.contentEditable='false';
+  txtEl.onkeydown=null;
+  if(newText) { s.transcription[idx].text=newText; saveState(); pushToServer(); }
+  txtEl.textContent=s.transcription[idx].text;
+  editBtn.textContent='✎ Edit'; editBtn.onclick=()=>editSegment(idx);
 }
 function appendTranscription(text) {
   const s=getSession(); if(!s||!text.trim()) return;

@@ -89,10 +89,15 @@ def _vl_oai_url() -> str:
     return f"http://{ASR_HOST}:{ASR_PORT}/vl/proxy/v1/chat/completions"
 
 
-_VL_MAX_HISTORY_CHARS = 12000  # rough guard: trim old turns if context gets too large
+_VL_MAX_SYSTEM_CHARS  = 3000  # ~750–1500 tokens depending on language density
+_VL_MAX_HISTORY_CHARS = 2000  # remaining budget for conversation turns
 
 
 def _build_vl_messages(system: str, msgs: list, image: str, image_mime: str = "image/jpeg") -> list:
+    # Truncate system prompt (transcription can be very long for extended sessions).
+    if len(system) > _VL_MAX_SYSTEM_CHARS:
+        system = system[:_VL_MAX_SYSTEM_CHARS] + "\n…[transcription truncated]"
+
     # Trim history from the front (keep latest turns) to avoid exceeding context length.
     # Always keep the last user message; drop older pairs until total chars fit.
     trimmed = list(msgs)
@@ -381,7 +386,7 @@ def _stream_claude(system: str, msgs: list, api_key: str = ""):
         client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
         with client.messages.stream(
             model=MODELS["claude"]["default_model"],
-            max_tokens=1024,
+            max_tokens=8096,
             system=system,
             messages=msgs,
         ) as stream:
@@ -416,7 +421,7 @@ def _stream_gemini(system: str, msgs: list, api_key: str = ""):
             contents=contents,
             config=genai.types.GenerateContentConfig(
                 system_instruction=system,
-                max_output_tokens=1024,
+                max_output_tokens=8096,
             ),
         )
         for chunk in response:
@@ -439,13 +444,13 @@ def _stream_mistral(system: str, msgs: list, api_key: str = ""):
 
     try:
         client = Mistral(api_key=api_key or os.environ.get("MISTRAL_API_KEY", ""))
-        # Mistral rejects assistant messages with None/empty content
-        clean_msgs = [m for m in msgs if m.get("content") is not None]
+        # Mistral rejects assistant messages with None or empty content
+        clean_msgs = [m for m in msgs if m.get("content")]
         full_msgs = [{"role": "system", "content": system}] + clean_msgs
 
         response = client.chat.stream(
             model=MODELS["mistral"]["default_model"],
-            max_tokens=1024,
+            max_tokens=8096,
             messages=full_msgs,
         )
         for event in response:

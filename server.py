@@ -613,7 +613,15 @@ async def websocket_endpoint(
                             async with infer_sem:
                                 await asyncio.to_thread(models["asr"].finish_streaming_transcribe, state)
 
-                            await ws.send_json({"type": "final", "text": state.text, "language": state.language})
+                            text = state.text or ""
+                            # Strip context prefix if the model echoed it back (happens on empty/silent audio)
+                            if context:
+                                if text.startswith(context):
+                                    text = text[len(context):].lstrip()
+                                elif text.lstrip().startswith("Reference only"):
+                                    text = ""
+
+                            await ws.send_json({"type": "final", "text": text, "language": state.language})
                         await ws.close(code=1000)
                         return
 
