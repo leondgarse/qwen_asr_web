@@ -61,6 +61,8 @@ STREAM_MIN_SAMPLES = int(os.getenv("STREAM_MIN_SAMPLES", "1600"))  # 100ms @ 16k
 PARTIAL_INTERVAL_MS = int(os.getenv("PARTIAL_INTERVAL_MS", "120"))  # throttle partials
 STREAM_EXPECT_SR = int(os.getenv("STREAM_EXPECT_SR", "16000"))
 
+CONTEXT_PREFIX = "Reference only — do NOT transcribe this. Vocabulary hint: "
+
 # -----------------------------
 # App state
 # -----------------------------
@@ -551,8 +553,31 @@ async def websocket_endpoint(
         if send_partial:
             now = time.monotonic()
             if (now - last_partial_ts) * 1000.0 >= PARTIAL_INTERVAL_MS:
-                await ws.send_json({"type": "partial", "text": state.text, "language": state.language})
+                text = state.text or ""
+                if context:
+                    text = strip_prompt(text, context)
+                await ws.send_json({"type": "partial", "text": text, "language": state.language})
                 last_partial_ts = now
+
+    def strip_prompt(text: str, ctx_raw: str) -> str:
+        """Robustly strip context prefix and 'Reference only' instructions from output."""
+        if not text:
+            return ""
+        # 1. Strip the specific prefixed version
+        full_p = f"{CONTEXT_PREFIX}{ctx_raw}"
+        if text.startswith(full_p):
+            text = text[len(full_p):].lstrip()
+        # 2. Strip common model-echoed variations
+        for p in [CONTEXT_PREFIX.strip(), "Reference only", "Vocabulary hint:"]:
+            if text.lstrip().startswith(p):
+                # If it starts with a part of the instruction, it's likely the whole echoing block
+                # ASR model often echoes the whole system prompt if it's "thinking" it's continuation
+                # We split by the first newline or double newline if the prefix is detected
+                if "\n" in text:
+                    text = text.split("\n", 1)[1].lstrip()
+                else:
+                    text = ""
+        return text
 
     try:
         while True:
@@ -587,10 +612,11 @@ async def websocket_endpoint(
 
                         # Init streaming state off event loop + limited concurrency (GPU touch)
                         try:
+                            full_context = f"{CONTEXT_PREFIX}{context}" if context else ""
                             async with infer_sem:
                                 state = await asyncio.to_thread(
                                     models["asr"].init_streaming_state,
-                                    context=context,
+                                    context=full_context,
                                     language=full_lang,
                                     unfixed_chunk_num=2,
                                     unfixed_token_num=5,
@@ -616,10 +642,7 @@ async def websocket_endpoint(
                             text = state.text or ""
                             # Strip context prefix if the model echoed it back (happens on empty/silent audio)
                             if context:
-                                if text.startswith(context):
-                                    text = text[len(context):].lstrip()
-                                elif text.lstrip().startswith("Reference only"):
-                                    text = ""
+                                text = strip_prompt(text, context)
 
                             await ws.send_json({"type": "final", "text": text, "language": state.language})
                         await ws.close(code=1000)

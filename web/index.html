@@ -1299,9 +1299,7 @@ function startStreamingUtterance() {
     isOpen = true;
     ws.send(JSON.stringify({
       type: 'start', format: 'pcm_s16le', sample_rate_hz: TARGET_SR, channels: 1,
-      context: contextText
-        ? `Reference only — do NOT transcribe this. Vocabulary hint: ${contextText.slice(0,600)}`
-        : '',
+      context: contextText ? contextText.slice(0, 1000) : '',
     }));
     for (const buf of pending) ws.send(buf);
     pending.length = 0;
