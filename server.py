@@ -62,6 +62,8 @@ PARTIAL_INTERVAL_MS = int(os.getenv("PARTIAL_INTERVAL_MS", "120"))  # throttle p
 STREAM_EXPECT_SR = int(os.getenv("STREAM_EXPECT_SR", "16000"))
 
 CONTEXT_PREFIX = "Reference only — do NOT transcribe this. Vocabulary hint: "
+CONTEXT_TAG_START = "[ASR_CONTEXT_START]"
+CONTEXT_TAG_END = "[ASR_CONTEXT_END]"
 
 # -----------------------------
 # App state
@@ -560,24 +562,41 @@ async def websocket_endpoint(
                 last_partial_ts = now
 
     def strip_prompt(text: str, ctx_raw: str) -> str:
-        """Robustly strip context prefix and 'Reference only' instructions from output."""
+        """Robustly strip context prefix and sentinel blocks from output."""
         if not text:
             return ""
-        # 1. Strip the specific prefixed version
-        full_p = f"{CONTEXT_PREFIX}{ctx_raw}"
-        if text.startswith(full_p):
-            text = text[len(full_p):].lstrip()
-        # 2. Strip common model-echoed variations
-        for p in [CONTEXT_PREFIX.strip(), "Reference only", "Vocabulary hint:"]:
-            if text.lstrip().startswith(p):
-                # If it starts with a part of the instruction, it's likely the whole echoing block
-                # ASR model often echoes the whole system prompt if it's "thinking" it's continuation
-                # We split by the first newline or double newline if the prefix is detected
+
+        # 1. Strip the exact block if it exists (most robust)
+        full_block = f"{CONTEXT_TAG_START}\n{CONTEXT_PREFIX}{ctx_raw}\n{CONTEXT_TAG_END}"
+        if text.startswith(full_block):
+            text = text[len(full_block) :].lstrip()
+            return text.strip()
+
+        # 2. Strip if it starts with the start tag (in case of partial echo or missing end tag)
+        if text.lstrip().startswith(CONTEXT_TAG_START):
+            if CONTEXT_TAG_END in text:
+                text = text.split(CONTEXT_TAG_END, 1)[1].lstrip()
+            elif "\n" in text:
+                # If we see the start tag but no end tag, strip everything until at least one newline
+                # or until the end of the instruction block we know about.
+                text = text.split("\n", 2)[-1].lstrip()
+            else:
+                text = ""
+            return text.strip()
+
+        # 3. Fallback to keyword-based stripping for general robustness
+        hallucination_patterns = ["[Reference Only]", "Reference only", "Vocabulary hint:", "Vocabulary hint", "[Context]", CONTEXT_PREFIX.strip()]
+
+        l_text = text.lstrip()
+        for p in hallucination_patterns:
+            if l_text.startswith(p):
                 if "\n" in text:
                     text = text.split("\n", 1)[1].lstrip()
                 else:
                     text = ""
-        return text
+                break
+
+        return text.strip()
 
     try:
         while True:
@@ -612,7 +631,7 @@ async def websocket_endpoint(
 
                         # Init streaming state off event loop + limited concurrency (GPU touch)
                         try:
-                            full_context = f"{CONTEXT_PREFIX}{context}" if context else ""
+                            full_context = f"{CONTEXT_TAG_START}\n{CONTEXT_PREFIX}{context}\n{CONTEXT_TAG_END}" if context else ""
                             async with infer_sem:
                                 state = await asyncio.to_thread(
                                     models["asr"].init_streaming_state,

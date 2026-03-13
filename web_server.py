@@ -89,7 +89,7 @@ def _vl_oai_url() -> str:
     return f"http://{ASR_HOST}:{ASR_PORT}/vl/proxy/v1/chat/completions"
 
 
-_VL_MAX_SYSTEM_CHARS  = 3000  # ~750–1500 tokens depending on language density
+_VL_MAX_SYSTEM_CHARS = 3000  # ~750–1500 tokens depending on language density
 _VL_MAX_HISTORY_CHARS = 2000  # remaining budget for conversation turns
 
 
