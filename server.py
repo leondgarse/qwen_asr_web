@@ -562,40 +562,69 @@ async def websocket_endpoint(
                 last_partial_ts = now
 
     def strip_prompt(text: str, ctx_raw: str) -> str:
-        """Robustly strip context prefix and sentinel blocks from output."""
+        """Surgically strip context instructions and vocabulary content from response."""
         if not text:
             return ""
 
-        # 1. Strip the exact block if it exists (most robust)
-        full_block = f"{CONTEXT_TAG_START}\n{CONTEXT_PREFIX}{ctx_raw}\n{CONTEXT_TAG_END}"
-        if text.startswith(full_block):
-            text = text[len(full_block) :].lstrip()
-            return text.strip()
+        # 1. Sentinel Tags are the highest priority and most reliable
+        if CONTEXT_TAG_END in text:
+            return text.split(CONTEXT_TAG_END, 1)[1].strip()
 
-        # 2. Strip if it starts with the start tag (in case of partial echo or missing end tag)
-        if text.lstrip().startswith(CONTEXT_TAG_START):
-            if CONTEXT_TAG_END in text:
-                text = text.split(CONTEXT_TAG_END, 1)[1].lstrip()
-            elif "\n" in text:
-                # If we see the start tag but no end tag, strip everything until at least one newline
-                # or until the end of the instruction block we know about.
-                text = text.split("\n", 2)[-1].lstrip()
+        # 2. If we see any "Instruction Zone" markers, we assume the model is echoing the prompt.
+        # This allows us to safely strip the following lines if they match the context.
+        instruction_markers = [
+            CONTEXT_TAG_START,
+            "Reference only",
+            "Vocabulary hint:",
+            "Vocabulary hint",
+            "[Reference Only]",
+            "[ASR_CONTEXT_START]"
+        ]
+        
+        lines = text.splitlines()
+        skip_idx = -1
+        in_instruction_block = False
+        
+        # Prepare context lines for comparison
+        ctx_lines = [l.strip() for l in ctx_raw.splitlines() if l.strip()]
+        
+        for i, line in enumerate(lines):
+            l = line.strip()
+            if not l:
+                if in_instruction_block:
+                    skip_idx = i
+                continue
+                
+            # Check for instruction start or continuation
+            is_instruction = any(m in l for m in instruction_markers)
+            # Check if the line is exactly one of the vocabulary bits provided
+            is_context_echo = any(l == cl for cl in ctx_lines) or (ctx_raw.strip() and l == ctx_raw.strip())
+            
+            if is_instruction:
+                in_instruction_block = True
+                skip_idx = i
+            elif is_context_echo and (in_instruction_block or i == 0):
+                # If it's a context echo and we've seen an instruction OR it's the very first line
+                # (Model often jumps straight to echoing the context list)
+                skip_idx = i
             else:
-                text = ""
-            return text.strip()
-
-        # 3. Fallback to keyword-based stripping for general robustness
-        hallucination_patterns = ["[Reference Only]", "Reference only", "Vocabulary hint:", "Vocabulary hint", "[Context]", CONTEXT_PREFIX.strip()]
-
-        l_text = text.lstrip()
-        for p in hallucination_patterns:
-            if l_text.startswith(p):
-                if "\n" in text:
-                    text = text.split("\n", 1)[1].lstrip()
-                else:
-                    text = ""
+                # We hit a line that doesn't look like prompt instructions or context content.
+                # Stop stripping here.
                 break
+                
+        if skip_idx != -1:
+            return "\n".join(lines[skip_idx+1:]).strip()
 
+        # 3. Final fallback: Extreme safety check for raw context leakage WITHOUT instructions.
+        # Only strip if it's a substantial exact match at the very beginning of the response.
+        l_text = text.lstrip()
+        l_ctx = ctx_raw.strip()
+        if l_ctx and len(l_ctx) > 5 and l_text.startswith(l_ctx):
+            remaining = l_text[len(l_ctx):].lstrip()
+            # If what follows looks like a continuation of speech or a newline
+            if not remaining or remaining[0] in ("\n", "\r", " ", ".", ",", ";"):
+                return remaining.strip()
+                
         return text.strip()
 
     try:
