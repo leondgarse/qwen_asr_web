@@ -10,6 +10,11 @@ soundfile>=0.12
 sounddevice>=0.4
 scipy>=1.10
 numpy>=1.24
+transformers==4.57.6
+librosa
+nagisa
+python-multipart
+vllm
 
 # ── Vocal separation (client_file.py --vocal-extraction) ─────────────────────
 # NOTE: torchaudio 2.9.x requires torchcodec which needs FFmpeg shared libs

@@ -1,16 +1,22 @@
 """
 Web UI server for Qwen3-ASR Studio.
 Serves the frontend and provides /api/chat (Claude / Gemini / Mistral) + /api/extract-context (PDF/MD).
-The transcription WebSocket connects directly to the ASR server at localhost:9002.
+The transcription WebSocket connects directly to the ASR server.
 
 Usage:
     # Set one or more API keys, then start:
     ANTHROPIC_API_KEY=sk-...  python web_server.py
     GOOGLE_API_KEY=...        python web_server.py
     MISTRAL_API_KEY=...       python web_server.py
+
+    # CLI arguments (override env vars):
+    python web_server.py --asr-host 192.168.1.100 --asr-port 9003
+    python web_server.py --port 8002
+
     Then open http://localhost:8001
 """
 
+import argparse
 import asyncio
 import os
 import io
@@ -53,9 +59,22 @@ async def _notify_viewers(payload: str) -> None:
             pass  # slow viewer; they'll catch up on reconnect
 
 
-# ── ASR / VL server config ────────────────────────────────────
-ASR_HOST = os.getenv("ASR_HOST", "localhost")
-ASR_PORT = int(os.getenv("ASR_PORT", "9002"))
+# ── Parse CLI args ────────────────────────────────────────────
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Qwen3-ASR Studio web server")
+    parser.add_argument("--asr-host", default=os.getenv("ASR_HOST", "localhost"),
+                        help="ASR server host (env: ASR_HOST, default: localhost)")
+    parser.add_argument("--asr-port", type=int, default=int(os.getenv("ASR_PORT", "9002")),
+                        help="ASR server port (env: ASR_PORT, default: 9002)")
+    parser.add_argument("--port", type=int, default=8001,
+                        help="Web server port (default: 8001)")
+    return parser.parse_args()
+
+# Parse args at module import time for globals
+_args = _parse_args()
+ASR_HOST = _args.asr_host
+ASR_PORT = _args.asr_port
+_WEB_PORT = _args.port
 
 _vl_checked = False  # True once we got a definitive "enabled" answer
 _vl_available = False
@@ -485,12 +504,12 @@ async def extract_context(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
-    print("Qwen3-ASR Studio  →  http://localhost:8001")
-    print("ASR server must be running on localhost:9002")
+    print(f"Qwen3-ASR Studio  →  http://localhost:{_WEB_PORT}")
+    print(f"ASR server must be running on {ASR_HOST}:{ASR_PORT}")
     avail = available_models()
     if avail:
         print(f"Chat models available: {', '.join(m['label'] for m in avail)}")
     else:
         print("⚠ No LLM API keys set. Chat will not work.")
         print("  Set one or more: ANTHROPIC_API_KEY, GOOGLE_API_KEY, MISTRAL_API_KEY")
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=_WEB_PORT)
