@@ -288,10 +288,10 @@ async def process_file(
 
         # ── Step 5: Transcribe each segment ──────────────────────────────────
         stem = os.path.splitext(file_path)[0]
-        jsonl_output_file = output if output else f"{stem}.jsonl"
-        print(f"Results will be written line by line to {jsonl_output_file}")
+        txt_output_file = output if output else f"{stem}.txt"
+        print(f"Results will be written line by line to {txt_output_file}")
 
-        with open(jsonl_output_file, "w", encoding="utf-8") as f:
+        with open(txt_output_file, "w", encoding="utf-8") as f:
             pass  # truncate
 
         pbar = tqdm(total=len(segments), desc="Transcribing")
@@ -323,9 +323,12 @@ async def process_file(
                     elif is_context_contamination(text, context):
                         tqdm.write(f"Skipping {timestamp_str} (context contamination detected)")
                     else:
-                        item = {"timestamp": timestamp_str, "text": text}
-                        with open(jsonl_output_file, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+                        # Extract just the start timestamp from "[0:00:00 - 0:00:01.170000]"
+                        start_ts = start_time
+                        # Truncate microseconds
+                        ts_str = str(start_ts).split(".")[0]
+                        with open(txt_output_file, "a", encoding="utf-8") as f:
+                            f.write(f"[{ts_str}] {text}\n")
 
             except Exception as e:
                 tqdm.write(f"Failed to process segment {timestamp_str}: {e}")
@@ -333,15 +336,15 @@ async def process_file(
             pbar.update(1)
 
         pbar.close()
-        print(f"\n--- Final transcription written to {jsonl_output_file} ---")
+        print(f"\n--- Final transcription written to {txt_output_file} ---")
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Qwen3-ASR File Streaming Transcriber with Vocal Extraction, VAD & Context")
+    parser = argparse.ArgumentParser(description="Qwen3-ASR File Streaming Transcriber with Vocal Extraction, VAD & Context (outputs TXT)")
     parser.add_argument("audio", help="Path to input audio file (.mp3, .wav, .m4a, ...)")
     parser.add_argument("-e", "--endpoint", default="ws://localhost:9002/transcribe-streaming", help="WebSocket Endpoint URL")
     parser.add_argument("-l", "--language", default="English", help="Forced language full name (e.g. English, Chinese, Japanese)")
-    parser.add_argument("-o", "--output", default=None, help="Output JSONL file path (default: <audio_stem>.jsonl)")
+    parser.add_argument("-o", "--output", default=None, help="Output TXT file path (default: <audio_stem>.txt)")
     parser.add_argument("--context", default=None, help="Path to PDF or Markdown reference document for vocabulary context")
     parser.add_argument(
         "--vocal-extraction",
