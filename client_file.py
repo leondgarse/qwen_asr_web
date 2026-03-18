@@ -126,6 +126,18 @@ def is_context_contamination(text: str, context: str) -> bool:
     return False
 
 
+def parse_time_str(time_str: str) -> timedelta:
+    parts = time_str.split(":")
+    if len(parts) == 3:
+        h, m, s = map(int, parts)
+    elif len(parts) == 2:
+        h = 0
+        m, s = map(int, parts)
+    else:
+        h, m, s = 0, 0, int(parts[0])
+    return timedelta(hours=h, minutes=m, seconds=s)
+
+
 def int16_to_bytes(audio_int16: np.ndarray) -> bytes:
     return audio_int16.tobytes()
 
@@ -252,6 +264,7 @@ async def process_file(
     vocal_extraction: bool = False,
     demucs_device: str = "cuda",
     separated_dir: str | None = None,
+    offset: timedelta = timedelta(),
 ):
     # ── Step 1: Vocal extraction (optional) ───────────────────────────────────
     audio_source = file_path
@@ -323,10 +336,7 @@ async def process_file(
                     elif is_context_contamination(text, context):
                         tqdm.write(f"Skipping {timestamp_str} (context contamination detected)")
                     else:
-                        # Extract just the start timestamp from "[0:00:00 - 0:00:01.170000]"
-                        start_ts = start_time
-                        # Truncate microseconds
-                        ts_str = str(start_ts).split(".")[0]
+                        ts_str = str((start_time + offset)).split(".")[0]
                         with open(txt_output_file, "a", encoding="utf-8") as f:
                             f.write(f"[{ts_str}] {text}\n")
 
@@ -340,7 +350,7 @@ async def process_file(
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Qwen3-ASR File Streaming Transcriber with Vocal Extraction, VAD & Context (outputs TXT)")
+    parser = argparse.ArgumentParser(description="Qwen3-ASR File Streaming Transcriber with Vocal Extraction, VAD & Context (outputs TXT)", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("audio", help="Path to input audio file (.mp3, .wav, .m4a, ...)")
     parser.add_argument("-e", "--endpoint", default="ws://localhost:9002/transcribe-streaming", help="WebSocket Endpoint URL")
     parser.add_argument("-l", "--language", default="English", help="Forced language full name (e.g. English, Chinese, Japanese)")
@@ -353,6 +363,7 @@ async def main():
     )
     parser.add_argument("--demucs-device", default="cuda", help="Device for demucs: cuda (default) or cpu / cuda:N.")
     parser.add_argument("--separated-dir", default=None, help="Where to store/reuse demucs output (default: separated/ next to the audio file).")
+    parser.add_argument("--offset", default=None, help="Start time offset added to all timestamps (e.g. 1:30:00 for recordings starting mid-event).")
     args = parser.parse_args()
 
     endpoint = args.endpoint
@@ -364,6 +375,8 @@ async def main():
     if args.context:
         context = extract_context(args.context)
 
+    offset = parse_time_str(args.offset) if args.offset else timedelta()
+
     await process_file(
         args.audio,
         endpoint,
@@ -372,6 +385,7 @@ async def main():
         vocal_extraction=args.vocal_extraction,
         demucs_device=args.demucs_device,
         separated_dir=args.separated_dir,
+        offset=offset,
     )
 
 
