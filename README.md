@@ -72,10 +72,16 @@ For event recordings with background music, add `--vocal-extraction` to run demu
 python client_file.py event_recording.mp3 --vocal-extraction --context slides.md --language English
 ```
 
-Output: `transcription_streaming.jsonl` — one line per speech segment:
+Timestamps can be offset (e.g. recordings starting mid-event):
 
-```json
-{"timestamp": "[0:01:23 - 0:01:45]", "text": "So clustering is an unsupervised learning task."}
+```bash
+python client_file.py event_recording.mp3 --offset 1:30:00
+```
+
+Output: `transcription_streaming.txt` — one line per speech segment:
+
+```
+[0:01:23] So clustering is an unsupervised learning task.
 ```
 
 **How it works internally:**
@@ -86,7 +92,7 @@ input audio
   → resample to 16kHz mono
   → WebRTC VAD (level 2)     split into speech segments
   → stream over WebSocket    with optional vocabulary context
-  → transcription_streaming.jsonl
+  → transcription_streaming.txt
 ```
 
 > **When to use `--vocal-extraction`:** event recordings (conferences, meetups) with background music and PA noise. Without it the ASR model hallucinates repetitive generic phrases when fed music. For clean lecture/interview audio it is unnecessary overhead (adds several minutes of CPU time). Separated tracks are cached in `separated/` next to the audio file and reused on subsequent runs.
@@ -113,6 +119,13 @@ Speak into the mic; each detected utterance is transcribed and printed with a ti
 
 If stuck on `[Recording...]`, background noise is triggering speech detection — increase `VAD_AGGRESSIVENESS` or `ENERGY_THRESHOLD`.
 
+**Client file options** (`client_file.py`):
+
+| Option | Default | Effect |
+|---|---|---|
+| `--offset` | `0:00:00` | Add time offset to all timestamps (e.g., `1:30:00` for recordings starting mid-event) |
+| `--output` | `<stem>.txt` | Custom output file path |
+
 ### 4. Transcribe a video file
 
 ```bash
@@ -132,7 +145,17 @@ GOOGLE_API_KEY=...         python web_server.py   # Gemini
 MISTRAL_API_KEY=...        python web_server.py   # Mistral
 ```
 
-Then open `http://localhost:8001` in a browser.
+Optionally override server ports via CLI args:
+
+```bash
+# Connect to remote ASR server
+python web_server.py --asr-host 192.168.1.100 --asr-port 9003
+
+# Run on custom ports
+python web_server.py --port 8002
+```
+
+Then open `http://localhost:8001` (or custom port) in a browser.
 
 **Instructor page** (`/`) — three-panel layout:
 - **Left** — session list, auto-saved to `localStorage`; double-click to rename

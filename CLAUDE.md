@@ -22,7 +22,7 @@ Server loads models in the background; poll `GET /health` until `"status": "read
 | `web_server.py` | Web UI server (port 8001) — serves `web/index.html`, `/api/chat`, `/api/translate`, `/api/extract-context` |
 | `web/index.html` | Instructor UI — sessions, AI chat (with image input), live mic transcription, auto-translation |
 | `web/viewer.html` | Viewer UI — live transcription + translations via SSE, AI chat |
-| `client_file.py` | **Primary client** — vocal extraction → resample → VAD → streaming ASR |
+| `client_file.py` | **Primary client** — vocal extraction → resample → VAD → streaming ASR (outputs TXT format) |
 | `client_mic.py` | Live microphone streaming client with VAD-based utterance detection |
 | `process_video.py` | Extract audio from video, start server, transcribe, save JSON |
 | `Qwen3-ASR-1.7B/` | ASR model weights |
@@ -71,7 +71,7 @@ input audio
   → resample to 16kHz mono                  # scipy.signal.resample_poly
   → WebRTC VAD aggressiveness=2             # split into speech segments
   → stream each segment over WebSocket      # with optional vocabulary context
-  → <stem>.jsonl                            # one JSON line per segment
+  → <stem>.txt                             # one text line per segment with timestamp
 ```
 
 ```bash
@@ -121,6 +121,14 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 | `ENABLE_ALIGNER_MODEL` | `true` | set `false` to skip |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches KV blocks for shared prefix |
 | `ASR_PORT` | `9002` | default port; overridden by `--port` CLI arg |
+
+## Web Server CLI Args
+
+| Arg | Default | Description |
+|---|---|---|
+| `--asr-host` | `localhost` | ASR server host |
+| `--asr-port` | `9002` | ASR server port |
+| `--port` | `8001` | Web server port |
 
 ## Key Notes
 
