@@ -30,7 +30,7 @@ body {
   font-size: 14px;
   background: var(--bg);
   color: var(--text);
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -423,6 +423,54 @@ body::after {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ── Mobile tab bar ── */
+#tab-bar {
+  display: none;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  gap: 4px;
+}
+.tab-btn {
+  flex: 1;
+  background: none; border: none;
+  color: var(--muted);
+  font-family: 'Syne', sans-serif;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 10px 4px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+@media (max-width: 700px) {
+  #tab-bar { display: flex; }
+  #resizer { display: none; }
+  #main { flex-direction: column; }
+  #chat, #transcription {
+    width: 100% !important;
+    min-width: 0 !important;
+    border: none !important;
+    flex: 1;
+  }
+  /* chat hidden by default on mobile (transcription is default tab) */
+  #chat { display: none; }
+  /* keep settings btn visible on mobile */
+  #chat-hd > div > #settings-btn { display: block; }
+  /* keys panel dropdown: anchor to right edge, cap width */
+  #keys-panel {
+    right: 0; left: auto;
+    min-width: 0; width: calc(100vw - 32px);
+  }
+}
 </style>
 </head>
 <body>
@@ -436,11 +484,17 @@ body::after {
   <span id="viewer-count"></span>
 </div>
 
+<!-- Mobile tab bar (hidden on desktop) -->
+<div id="tab-bar">
+  <button class="tab-btn" data-tab="chat">Chat</button>
+  <button class="tab-btn active" data-tab="transcription">Transcription</button>
+</div>
+
 <div id="main">
   <!-- Left: Chat -->
   <main id="chat">
     <div id="chat-hd">
-      <h2>Ask about the lecture</h2>
+      <h2 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Select model</h2>
       <select id="model-select"><option value="auto">Loading models…</option></select>
       <div style="position:relative">
         <button id="settings-btn" title="API key settings">⚙</button>
@@ -466,7 +520,7 @@ body::after {
     <div id="chat-input-area">
       <button id="img-btn" title="Attach image">🖼</button>
       <input type="file" id="img-input" accept="image/*" style="display:none">
-      <textarea id="chat-input" rows="1" placeholder="Ask about the transcription… (Enter to send)"></textarea>
+      <textarea id="chat-input" rows="1" placeholder="Ask about the lecture…"></textarea>
       <button id="send-btn">Send</button>
     </div>
   </main>
@@ -477,6 +531,7 @@ body::after {
   <section id="transcription">
     <div id="tr-hd">
       <h3>Live Transcription</h3>
+      <button id="toggle-translation-btn" title="Toggle translations" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:4px 7px;border-radius:6px;line-height:1;transition:color .15s,background .15s;font-family:'Outfit',sans-serif;">⇄ Trans</button>
       <button id="export-btn" title="Export as TXT">&#8659;</button>
     </div>
     <div id="tr-output">
@@ -498,11 +553,14 @@ let segments          = [];   // [{time, text}] received from SSE
 let chatMsgs          = [];   // local chat history (not persisted)
 let lastRenderedCount = 0;    // incremental rendering cursor
 let attachedImage     = '';   // base64 of currently attached image
+let showTranslation   = localStorage.getItem('viewer_show_translation') !== 'false';
 
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function renderMd(s) { return typeof marked !== 'undefined' ? marked.parse(s) : esc(s).replace(/\n/g,'<br>'); }
 function fmtTime(d=new Date()) { return d.toTimeString().slice(0,8); }
 function scrollBottom(el) { el.scrollTop = el.scrollHeight; }
+function isAtBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 60; }
+function scrollBottomIfPinned(el) { if (isAtBottom(el)) scrollBottom(el); }
 
 // ═══════════════════════════════════════════════════════════
 // Mermaid
@@ -571,7 +629,7 @@ function connect() {
       if (msg.text) {
         txt.textContent = msg.text;
         el.style.display = 'block';
-        scrollBottom(document.getElementById('tr-output'));
+        scrollBottomIfPinned(document.getElementById('tr-output'));
       } else {
         el.style.display = 'none';
         txt.textContent  = '';
@@ -600,11 +658,37 @@ function connect() {
 // ═══════════════════════════════════════════════════════════
 // Transcription rendering
 // ═══════════════════════════════════════════════════════════
+function updateTranslationToggleBtn() {
+  const btn = document.getElementById('toggle-translation-btn');
+  btn.style.color = showTranslation ? 'var(--accent)' : 'var(--muted)';
+  btn.style.background = showTranslation ? 'rgba(59,130,246,0.1)' : 'none';
+}
+
 function makeTrEntry(entry) {
   const div = document.createElement('div');
   div.className = 'tr-entry';
   div.innerHTML = `<div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`
-    + (entry.translated ? `<div class="tr-translated">${esc(entry.translated)}</div>` : '');
+    + (entry.translated ? `<div class="tr-translated" style="${showTranslation ? '' : 'display:none'}">${esc(entry.translated)}</div>` : '');
+  const txtEl = div.querySelector('.tr-txt');
+  txtEl.addEventListener('dblclick', () => {
+    if (txtEl.contentEditable === 'true') return;
+    const original = txtEl.textContent;
+    txtEl.contentEditable = 'true';
+    txtEl.focus();
+    const range = document.createRange(); range.selectNodeContents(txtEl); range.collapse(false);
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    const finish = (save) => {
+      txtEl.contentEditable = 'false';
+      txtEl.onkeydown = null;
+      if (save) { const v = txtEl.textContent.trim(); if (v) { entry.text = v; txtEl.textContent = v; } else txtEl.textContent = original; }
+      else txtEl.textContent = original;
+    };
+    txtEl.onkeydown = e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') finish(false);
+    };
+    txtEl.onblur = () => finish(true);
+  });
   return div;
 }
 
@@ -643,12 +727,13 @@ function renderTranscription() {
     if (!el) {
       el = document.createElement('div');
       el.className = 'tr-translated';
+      if (!showTranslation) el.style.display = 'none';
       rendered[i].appendChild(el);
     }
     if (el.textContent !== seg.translated) el.textContent = seg.translated;
   }
 
-  scrollBottom(out);
+  scrollBottomIfPinned(out);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -808,8 +893,53 @@ chatInput.addEventListener('keydown', e => {
 document.getElementById('send-btn').addEventListener('click', sendChatMessage);
 
 // ═══════════════════════════════════════════════════════════
+// Translation toggle
+// ═══════════════════════════════════════════════════════════
+document.getElementById('toggle-translation-btn').addEventListener('click', () => {
+  showTranslation = !showTranslation;
+  localStorage.setItem('viewer_show_translation', showTranslation);
+  updateTranslationToggleBtn();
+  document.querySelectorAll('.tr-translated').forEach(el => {
+    el.style.display = showTranslation ? '' : 'none';
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Mobile tab switching
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const isMobile = () => window.innerWidth <= 700;
+
+  function switchTab(name) {
+    const chat = document.getElementById('chat');
+    const tr   = document.getElementById('transcription');
+    if (!isMobile()) return;
+    chat.style.display = name === 'chat'          ? 'flex' : 'none';
+    tr.style.display   = name === 'transcription' ? 'flex' : 'none';
+    document.querySelectorAll('.tab-btn').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.tab === name));
+    // Close keys panel when switching tabs
+    document.getElementById('keys-panel').classList.remove('open');
+  }
+
+  document.querySelectorAll('.tab-btn').forEach(btn =>
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+
+  // On desktop, reset any mobile-applied inline styles
+  window.addEventListener('resize', () => {
+    if (!isMobile()) {
+      document.getElementById('chat').style.display          = '';
+      document.getElementById('transcription').style.display = '';
+      document.getElementById('transcription').style.width   = '';
+      document.getElementById('keys-panel').classList.remove('open');
+    }
+  });
+})();
+
+// ═══════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════
+updateTranslationToggleBtn();
 connect();
 
 (async function fetchModels() {

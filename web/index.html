@@ -466,31 +466,27 @@ body::after {
   background: var(--bg3);
   border: 1px solid var(--border2);
   color: var(--text); border-radius: 8px;
-  padding: 5px 10px; font-size: 13px;
+  padding: 5px 8px; font-size: 12px;
   font-family: 'Outfit', sans-serif;
   cursor: pointer; outline: none;
   transition: border-color .15s;
+  height: 30px;
 }
-#lang-select { flex: 1; }
+#lang-select { width: 90px; }
 #lang-select:focus, #translate-lang-main:focus { border-color: var(--accent); }
 #translate-lang-wrap { align-items: center; gap: 5px; }
 #translate-lang-wrap > span:first-child { font-size: 12px; color: var(--muted); }
 
 /* ── Mic area ── */
-#mic-area {
-  padding: 13px 15px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
 #mic-btn {
-  width: 100%; padding: 12px;
-  border-radius: 12px; border: none;
+  padding: 5px 14px; height: 30px; min-width: 80px;
+  border-radius: 8px; border: 1px solid var(--border2);
   cursor: pointer;
-  font-family: 'Syne', sans-serif;
-  font-size: 13px; font-weight: 700;
-  letter-spacing: .05em;
-  display: flex; align-items: center;
-  justify-content: center; gap: 10px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 13px; font-weight: 600;
+  letter-spacing: .02em;
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; flex-shrink: 0;
   transition: all .2s;
 }
 #mic-btn.idle {
@@ -526,47 +522,37 @@ body::after {
   50%       { opacity: .35; transform: scale(.65); }
 }
 #rec-status {
-  font-size: 11px; color: var(--muted);
-  margin-top: 7px; text-align: center;
-  min-height: 16px;
+  font-size: 10px; color: var(--muted);
+  margin-top: 5px;
   font-family: 'Space Mono', monospace;
-  letter-spacing: .05em;
+  letter-spacing: .05em; min-height: 14px;
 }
 
 /* ── Context upload ── */
-#ctx-area {
-  padding: 10px 15px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-#ctx-area label {
-  font-family: 'Syne', sans-serif;
-  font-size: 10px; font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase; letter-spacing: .10em;
-  display: block; margin-bottom: 7px;
-}
 #ctx-file-input { display: none; }
 #ctx-pick-btn {
   background: var(--bg3);
   border: 1px solid var(--border2);
   color: var(--text); border-radius: 8px;
-  padding: 5px 12px; cursor: pointer;
-  font-size: 12px; font-family: 'Outfit', sans-serif;
+  padding: 5px 8px; height: 30px;
+  cursor: pointer; font-size: 12px;
+  font-family: 'Outfit', sans-serif;
+  flex-shrink: 0; white-space: nowrap;
   transition: border-color .15s, color .15s;
 }
 #ctx-pick-btn:hover { border-color: var(--accent); color: var(--accent); }
 #ctx-info {
   font-size: 10px; color: var(--muted);
-  margin-top: 6px; min-height: 15px;
   font-family: 'Space Mono', monospace;
+  white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; max-width: 80px;
 }
 #ctx-clear {
   display: none;
   background: none; border: none;
   color: var(--red); cursor: pointer;
-  font-size: 11px; margin-left: 6px;
-  padding: 2px 5px; border-radius: 4px;
+  font-size: 11px; flex-shrink: 0;
+  padding: 2px 4px; border-radius: 4px;
   transition: background .12s;
 }
 #ctx-clear:hover { background: rgba(239, 68, 68, 0.1); }
@@ -745,6 +731,10 @@ body::after {
       </div>
 
       <div id="lang-row">
+        <button id="mic-btn" class="idle">
+          <span id="mic-dot"></span>
+          <span id="mic-label">Record</span>
+        </button>
         <select id="lang-select">
           <option value="English">English</option>
           <option value="Chinese">Chinese</option>
@@ -767,23 +757,12 @@ body::after {
             <option value="Spanish">ES</option>
           </select>
         </span>
+        <button id="ctx-pick-btn" title="Upload context file (vocab hint)">📎 Context</button>
+        <input type="file" id="ctx-file-input" accept=".pdf,.md,.markdown,.txt">
+        <span id="ctx-info"></span>
+        <button id="ctx-clear">✕</button>
       </div>
-    </div>
-
-    <div id="mic-area">
-      <button id="mic-btn" class="idle">
-        <span id="mic-dot"></span>
-        <span id="mic-label">Start Recording</span>
-      </button>
       <div id="rec-status">Idle</div>
-    </div>
-
-    <div id="ctx-area">
-      <label>Context file (vocab hint)</label>
-      <button id="ctx-pick-btn">📎 Upload PDF / MD / TXT</button>
-      <input type="file" id="ctx-file-input" accept=".pdf,.md,.markdown,.txt">
-      <div id="ctx-info"></div>
-      <button id="ctx-clear">✕ Clear context</button>
     </div>
 
     <div id="tr-output">
@@ -943,6 +922,8 @@ function resampleTo16k(input, fromSR) {
   return out;
 }
 function scrollBottom(el) { el.scrollTop = el.scrollHeight; }
+function isAtBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 60; }
+function scrollBottomIfPinned(el) { if (isAtBottom(el)) scrollBottom(el); }
 
 // ═══════════════════════════════════════════════════════════
 // Session management
@@ -1115,6 +1096,7 @@ function makeTrEntry(entry, idx) {
     +`<button class="tr-edit" onclick="editSegment(${idx})" title="Edit">✎ Edit</button>`
     +`<button class="tr-del" onclick="deleteSegment(${idx})" title="Delete">✕ Delete</button>`
     +`</div></div>`;
+  div.querySelector('.tr-txt').addEventListener('dblclick', () => editSegment(idx));
   return div;
 }
 async function translateSegment(btn, idx) {
@@ -1212,14 +1194,14 @@ function appendTranscription(text) {
   const partial=document.getElementById('partial-entry');
   const el=makeTrEntry(entry, s.transcription.length-1);
   out.insertBefore(el, partial);
-  scrollBottom(out);
+  scrollBottomIfPinned(out);
   renderSessions();
   autoTranslateEntry(el, entry);
 }
 function setPartial(text) {
   const el=document.getElementById('partial-entry');
   const txt=document.getElementById('partial-txt');
-  if (text) { txt.textContent=text; el.style.display='block'; scrollBottom(document.getElementById('tr-output')); }
+  if (text) { txt.textContent=text; el.style.display='block'; scrollBottomIfPinned(document.getElementById('tr-output')); }
   else       { el.style.display='none'; txt.textContent=''; }
   pushPartial(text);
 }
@@ -1358,8 +1340,6 @@ function flushUtterance() {
 async function startRecording() {
   if (!getSession()) createSession();
 
-  // navigator.mediaDevices is only available in secure contexts (HTTPS or localhost).
-  // Accessing via an IP address over plain HTTP will make it undefined.
   if (!navigator.mediaDevices?.getUserMedia) {
     const isLocalhost = ['localhost','127.0.0.1','::1'].includes(location.hostname);
     const msg = isLocalhost
@@ -1396,7 +1376,7 @@ async function startRecording() {
 
   isRecording=true; isSpeaking=false; speechCount=0; silenceCount=0; speechChunks=[];
   document.getElementById('mic-btn').className='active';
-  document.getElementById('mic-label').textContent='Stop Recording';
+  document.getElementById('mic-label').textContent='Stop';
   setRecStatus('Listening…');
 }
 
@@ -1408,7 +1388,7 @@ function stopRecording() {
   if(audioCtx){audioCtx.close().catch(()=>{});audioCtx=null;}
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
   document.getElementById('mic-btn').className='idle';
-  document.getElementById('mic-label').textContent='Start Recording';
+  document.getElementById('mic-label').textContent='Record';
   setRecStatus('Idle');
 }
 
