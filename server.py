@@ -147,21 +147,24 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 # -----------------------------
 # GPU memory auto-sizing
 # -----------------------------
-# Approximate fixed GB needed for each component (model weights + KV cache for single user)
-_ASR_TARGET_GB = 6.0  # 1.7B weights ~3.4 GB + KV cache
+# Estimated GB needed for each component (model weights + KV cache)
+# Updated based on actual measurement: Qwen3-ASR-1.7B weights ~3.87 GB + KV cache buffer
+_ASR_ESTIMATED_GB = 6.0  # 3.87 GB weights + ~2 GB KV cache buffer
 _ALIGNER_GB = 1.5  # rough footprint of the 0.6B aligner
-_VL_BUFFER_GB = 2.0  # safety headroom for VL model
+_VL_BUFFER_GB = 2.5  # safety headroom for VL model
 _VL_MAX_GB = 20.0  # cap VL server memory so KV cache doesn't balloon on large GPUs
+_GPU_MAX_UTIL = 0.75  # maximum utilization for small GPUs (leave room for others)
 
 
 def _auto_asr_gpu_util() -> float:
-    """Compute gpu_memory_utilization so ASR model gets ~_ASR_TARGET_GB regardless of GPU size."""
+    """Compute gpu_memory_utilization based on estimated model needs, fitted to FREE GPU memory."""
     if not torch.cuda.is_available():
         return 0.15
-    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    target = min(_ASR_TARGET_GB, total_gb * 0.25)
-    util = round(target / total_gb, 3)
-    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {target:.1f} GB / {total_gb:.1f} GB total)")
+    free_bytes, _ = torch.cuda.mem_get_info(0)
+    free_gb = free_bytes / 1024**3
+    # Use estimated needs, but cap at reasonable utilization of free memory
+    util = round(min(_ASR_ESTIMATED_GB / free_gb, _GPU_MAX_UTIL), 3)
+    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {_ASR_ESTIMATED_GB:.1f} GB / {free_gb:.1f} GB free)")
     return util
 
 

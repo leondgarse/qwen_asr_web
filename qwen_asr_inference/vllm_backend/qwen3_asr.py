@@ -340,13 +340,8 @@ class Qwen3ASRAudioEncoder(nn.Module):
         )
 
     def compute_attn_mask_seqlen(self, cu_seqlens: torch.Tensor) -> torch.Tensor | None:
-        """Compute max_seqlen only for flash attention backends."""
-        max_seqlen = None
-        if self.attn_backend in {
-            AttentionBackendEnum.FLASH_ATTN,
-            AttentionBackendEnum.ROCM_AITER_FA,
-        }:
-            max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max()
+        """Compute max_seqlen for chunked attention support."""
+        max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max() if len(cu_seqlens) > 1 else 0
         return max_seqlen
 
     @property
