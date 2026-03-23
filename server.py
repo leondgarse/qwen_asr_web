@@ -149,21 +149,38 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 # -----------------------------
 # Estimated GB needed for each component (model weights + KV cache)
 # Updated based on actual measurement: Qwen3-ASR-1.7B weights ~3.87 GB + KV cache buffer
-_ASR_ESTIMATED_GB = 5.0  # 3.87 GB weights + ~1 GB KV cache (max_model_len=2048)
+_ASR_ESTIMATED_GB = 5.0   # 3.87 GB weights + ~1 GB KV cache (max_model_len=2048)
+_ASR_ESTIMATED_GB_4K = 5.5  # weights + ~1.6 GB KV cache (max_model_len=4096, large GPUs)
+_VL_ESTIMATED_GB = 4.5    # minimum needed for 2B VL model weights + profiling overhead
 _ALIGNER_GB = 1.5  # rough footprint of the 0.6B aligner
-_VL_BUFFER_GB = 1.0  # safety headroom for VL model (CUDA context already counted in free memory)
+_VL_BUFFER_GB = 1.5  # safety headroom after VL allocation
 _VL_MAX_GB = 20.0  # cap VL server memory so KV cache doesn't balloon on large GPUs
 _GPU_MAX_UTIL = 0.75  # maximum utilization for small GPUs (leave room for others)
 
 
-def _auto_asr_gpu_util() -> float:
-    """Compute gpu_memory_utilization as a fraction of total GPU memory."""
+def _auto_asr_gpu_util(with_vl: bool = False) -> float:
+    """Compute gpu_memory_utilization as a fraction of total GPU memory.
+    When VL model will also be loaded, cap ASR lower to leave headroom."""
     if not torch.cuda.is_available():
         return 0.15
     total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    util = round(min(_ASR_ESTIMATED_GB / total_gb, _GPU_MAX_UTIL), 3)
-    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {_ASR_ESTIMATED_GB:.1f} GB / {total_gb:.1f} GB total)")
+    if with_vl:
+        # Reserve enough for VL model + buffer; give ASR the rest, capped at _GPU_MAX_UTIL
+        asr_gb = min(_ASR_ESTIMATED_GB, total_gb - _VL_ESTIMATED_GB - _VL_BUFFER_GB)
+        asr_gb = max(asr_gb, 4.0)  # always give ASR at least 4 GB
+    else:
+        asr_gb = _ASR_ESTIMATED_GB_4K if total_gb >= 16 else _ASR_ESTIMATED_GB
+    util = round(min(asr_gb / total_gb, _GPU_MAX_UTIL), 3)
+    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {asr_gb:.1f} GB / {total_gb:.1f} GB total, with_vl={with_vl})")
     return util
+
+
+def _auto_asr_max_model_len() -> int:
+    """Pick max_model_len for ASR based on total GPU memory."""
+    if not torch.cuda.is_available():
+        return 2048
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    return 4096 if total_gb >= 16 else 2048
 
 
 def _auto_vl_gpu_util() -> float:
@@ -259,13 +276,14 @@ def load_models():
         os.environ.setdefault("VLLM_CPU_KVCACHE_SPACE", "4")
         os.environ.setdefault("VLLM_LIMIT_MM_PER_PROMPT", "audio=32768")
         asr_util_env = os.getenv("GPU_MEMORY_UTILIZATION", "")
-        asr_util = float(asr_util_env) if asr_util_env else _auto_asr_gpu_util()  # noqa: F841 (used below)
+        asr_util = float(asr_util_env) if asr_util_env else _auto_asr_gpu_util(with_vl=bool(VL_MODEL_NAME))  # noqa: F841 (used below)
+        asr_max_len = int(os.getenv("MAX_MODEL_LEN", str(_auto_asr_max_model_len())))
         models["asr"] = Qwen3ASRModel.LLM(
             model=model_name,
             gpu_memory_utilization=asr_util,
             max_new_tokens=int(os.getenv("MAX_NEW_TOKENS", "8192")),
-            max_model_len=int(os.getenv("MAX_MODEL_LEN", "2048")),
-            max_num_batched_tokens=int(os.getenv("MAX_MODEL_LEN", "2048")),
+            max_model_len=asr_max_len,
+            max_num_batched_tokens=asr_max_len,
             enforce_eager=True,
             trust_remote_code=True,
             enable_prefix_caching=get_env_bool("ENABLE_PREFIX_CACHING", "true"),
