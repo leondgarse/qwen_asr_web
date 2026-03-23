@@ -9,6 +9,8 @@ python server.py                             # ASR + chat API, binds 0.0.0.0:900
 python server.py --port 9000                 # custom port
 python server.py --qwenvl                    # + Qwen3-VL-2B-Instruct on VL_PORT (default 9004)
 python server.py --qwenvl Qwen/Model-Name    # custom VL model
+python server.py --qwenvl --vl-device 1     # VL on GPU 1 (2nd GPU), ASR on GPU 0
+python server.py --asr-device 0 --qwenvl --vl-device 1  # explicit GPU assignment
 python web_server.py                         # Web UI, binds 0.0.0.0:8001
 ```
 
@@ -116,6 +118,8 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 | `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; auto = free GPU − 2 GB buffer, capped at 20 GB |
 | `VL_MAX_MODEL_LEN` | auto | VL context length; auto from free GPU, max 16384 |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |
+| `ASR_DEVICE` | `""` | GPU index for ASR model (overridden by `--asr-device`) |
+| `VL_DEVICE` | `""` | GPU index for VL subprocess (overridden by `--vl-device`); empty = share GPU with ASR |
 | `MAX_NEW_TOKENS` | `8192` | |
 | `ENABLE_ASR_MODEL` | `true` | set `false` to skip |
 | `ENABLE_ALIGNER_MODEL` | `false` | set `true` to enable word-level timestamps |

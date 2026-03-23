@@ -23,9 +23,13 @@ _parser.add_argument(
     help="Enable Qwen-VL model (optional model name, default: Qwen2.5-VL-3B-Instruct)",
 )
 _parser.add_argument("--port", type=int, default=int(os.getenv("ASR_PORT", "9002")), help="Port to listen on (default: 9002)")
+_parser.add_argument("--asr-device", default=os.getenv("ASR_DEVICE", ""), metavar="N", help="GPU index for ASR model, e.g. 0 (default: unset)")
+_parser.add_argument("--vl-device", default=os.getenv("VL_DEVICE", ""), metavar="N", help="GPU index for VL subprocess, e.g. 1 (default: unset)")
 _cli, _ = _parser.parse_known_args()
 VL_MODEL_NAME = _cli.qwenvl or os.getenv("VL_MODEL_NAME", "")
 VL_PORT = int(os.getenv("VL_PORT", "9004"))
+ASR_DEVICE = _cli.asr_device  # GPU index for ASR model, e.g. "0"
+VL_DEVICE = _cli.vl_device    # GPU index for VL subprocess, e.g. "1"
 
 import uvicorn
 import numpy as np
@@ -158,19 +162,30 @@ _VL_MAX_GB = 20.0  # cap VL server memory so KV cache doesn't balloon on large G
 _GPU_MAX_UTIL = 0.75  # maximum utilization for small GPUs (leave room for others)
 
 
+def _asr_device_index() -> int:
+    """Return the CUDA device index for ASR memory queries."""
+    if ASR_DEVICE:
+        try:
+            return int(ASR_DEVICE)
+        except ValueError:
+            pass
+    return 0
+
+
 def _auto_asr_gpu_util(with_vl: bool = False) -> float:
     """Compute gpu_memory_utilization as a fraction of total GPU memory.
-    When VL model will also be loaded, cap ASR to leave headroom for VL."""
+    When VL shares the same GPU, cap ASR to leave headroom for VL."""
     if not torch.cuda.is_available():
         return 0.15
-    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    if with_vl:
-        # Give VL _VL_ESTIMATED_GB + _VL_BUFFER_GB; ASR gets the rest, but never less than needed
+    dev = _asr_device_index()
+    total_gb = torch.cuda.get_device_properties(dev).total_memory / 1024**3
+    if with_vl and not VL_DEVICE:
+        # VL shares this GPU — give VL _VL_ESTIMATED_GB + _VL_BUFFER_GB; ASR gets the rest
         asr_gb = max(total_gb - _VL_ESTIMATED_GB - _VL_BUFFER_GB, _ASR_ESTIMATED_GB)
     else:
         asr_gb = _ASR_ESTIMATED_GB_4K if total_gb >= 16 else _ASR_ESTIMATED_GB
     util = round(min(asr_gb / total_gb, _GPU_MAX_UTIL), 3)
-    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {asr_gb:.1f} GB / {total_gb:.1f} GB total, with_vl={with_vl})")
+    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {asr_gb:.1f} GB / {total_gb:.1f} GB total, with_vl={with_vl}, vl_device='{VL_DEVICE}')")
     return util
 
 
@@ -178,20 +193,33 @@ def _auto_asr_max_model_len() -> int:
     """Pick max_model_len for ASR based on total GPU memory."""
     if not torch.cuda.is_available():
         return 2048
-    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    dev = _asr_device_index()
+    total_gb = torch.cuda.get_device_properties(dev).total_memory / 1024**3
     return 4096 if total_gb >= 16 else 2048
+
+
+def _vl_device_index() -> int:
+    """Return the CUDA device index to use for VL memory queries.
+    If VL_DEVICE is set (e.g. '1'), use that; otherwise fall back to device 0."""
+    if VL_DEVICE:
+        try:
+            return int(VL_DEVICE)
+        except ValueError:
+            pass
+    return 0
 
 
 def _auto_vl_gpu_util() -> float:
     """Compute gpu_memory_utilization for VL model using actual free GPU memory at call time."""
     if not torch.cuda.is_available():
         return 0.55
-    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    free_bytes, _ = torch.cuda.mem_get_info(0)
+    dev = _vl_device_index()
+    total_gb = torch.cuda.get_device_properties(dev).total_memory / 1024**3
+    free_bytes, _ = torch.cuda.mem_get_info(dev)
     free_gb = free_bytes / 1024**3
     usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_MAX_GB)
     util = round(min(usable_gb / total_gb, 0.90), 3)
-    logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total)")
+    logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total, device={dev})")
     return util
 
 
@@ -199,7 +227,8 @@ def _auto_vl_max_model_len() -> int:
     """Pick max_model_len for VL based on free GPU memory, capped at 16384."""
     if not torch.cuda.is_available():
         return 4096
-    free_bytes, _ = torch.cuda.mem_get_info(0)
+    dev = _vl_device_index()
+    free_bytes, _ = torch.cuda.mem_get_info(dev)
     free_gb = free_bytes / 1024**3
     if free_gb >= 20:
         return 16384
@@ -240,6 +269,10 @@ def _start_vl_server(model_name: str, vl_util: float) -> subprocess.Popen:
     vl_env.pop("VLLM_ENABLE_V1_MULTIPROCESSING", None)
     vl_env.pop("VLLM_CPU_KVCACHE_SPACE", None)
     vl_env.pop("VLLM_LIMIT_MM_PER_PROMPT", None)
+    if VL_DEVICE:
+        # Pin VL subprocess to a specific GPU (e.g. VL_DEVICE=1 for second GPU)
+        vl_env["CUDA_VISIBLE_DEVICES"] = VL_DEVICE
+        logger.info(f"VL subprocess pinned to GPU {VL_DEVICE} via CUDA_VISIBLE_DEVICES")
     logger.info(f"Starting VL server: {' '.join(cmd)}")
     return subprocess.Popen(cmd, env=vl_env)
 
@@ -270,6 +303,9 @@ def load_models():
         _default_asr = next((m for m in ("Qwen/Qwen3-ASR-1.7B", "Qwen/Qwen3-ASR-0.6B") if os.path.isdir(m)), "Qwen/Qwen3-ASR-1.7B")
         model_name = os.getenv("ASR_MODEL_NAME", _default_asr)
         logger.info(f"Loading ASR Model: {model_name}...")
+        if ASR_DEVICE:
+            os.environ["CUDA_VISIBLE_DEVICES"] = ASR_DEVICE
+            logger.info(f"ASR model pinned to GPU {ASR_DEVICE} via CUDA_VISIBLE_DEVICES")
         os.environ.setdefault("VLLM_TARGET_DEVICE", "cpu")
         os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
         os.environ.setdefault("VLLM_CPU_KVCACHE_SPACE", "4")
