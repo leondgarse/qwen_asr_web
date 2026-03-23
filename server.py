@@ -160,14 +160,13 @@ _GPU_MAX_UTIL = 0.75  # maximum utilization for small GPUs (leave room for other
 
 def _auto_asr_gpu_util(with_vl: bool = False) -> float:
     """Compute gpu_memory_utilization as a fraction of total GPU memory.
-    When VL model will also be loaded, cap ASR lower to leave headroom."""
+    When VL model will also be loaded, cap ASR to leave headroom for VL."""
     if not torch.cuda.is_available():
         return 0.15
     total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
     if with_vl:
-        # Reserve enough for VL model + buffer; give ASR the rest, capped at _GPU_MAX_UTIL
-        asr_gb = min(_ASR_ESTIMATED_GB, total_gb - _VL_ESTIMATED_GB - _VL_BUFFER_GB)
-        asr_gb = max(asr_gb, 4.0)  # always give ASR at least 4 GB
+        # Give VL _VL_ESTIMATED_GB + _VL_BUFFER_GB; ASR gets the rest, but never less than needed
+        asr_gb = max(total_gb - _VL_ESTIMATED_GB - _VL_BUFFER_GB, _ASR_ESTIMATED_GB)
     else:
         asr_gb = _ASR_ESTIMATED_GB_4K if total_gb >= 16 else _ASR_ESTIMATED_GB
     util = round(min(asr_gb / total_gb, _GPU_MAX_UTIL), 3)
