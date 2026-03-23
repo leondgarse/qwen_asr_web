@@ -149,7 +149,7 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 # -----------------------------
 # Estimated GB needed for each component (model weights + KV cache)
 # Updated based on actual measurement: Qwen3-ASR-1.7B weights ~3.87 GB + KV cache buffer
-_ASR_ESTIMATED_GB = 5.0  # 3.87 GB weights + ~1 GB KV cache (max_model_len=4096 is sufficient)
+_ASR_ESTIMATED_GB = 5.5  # 3.87 GB weights + ~1.6 GB KV cache (max_model_len=4096)
 _ALIGNER_GB = 1.5  # rough footprint of the 0.6B aligner
 _VL_BUFFER_GB = 1.0  # safety headroom for VL model (CUDA context already counted in free memory)
 _VL_MAX_GB = 20.0  # cap VL server memory so KV cache doesn't balloon on large GPUs
