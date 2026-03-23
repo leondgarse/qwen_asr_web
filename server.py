@@ -276,7 +276,7 @@ def load_models():
     else:
         logger.info("ASR Model disabled via ENABLE_ASR_MODEL.")
 
-    if get_env_bool("ENABLE_ALIGNER_MODEL", "true"):
+    if get_env_bool("ENABLE_ALIGNER_MODEL", "false"):
         if Qwen3ForcedAligner is None:
             raise RuntimeError("qwen_asr not installed (Qwen3ForcedAligner missing).")
         aligner_name = os.getenv("ALIGNER_MODEL_NAME", "Qwen/Qwen3-ForcedAligner-0.6B")

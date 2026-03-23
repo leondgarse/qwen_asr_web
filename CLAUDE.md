@@ -118,7 +118,7 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 | `VL_PORT` | `9004` | Internal port for VL subprocess |
 | `MAX_NEW_TOKENS` | `8192` | |
 | `ENABLE_ASR_MODEL` | `true` | set `false` to skip |
-| `ENABLE_ALIGNER_MODEL` | `true` | set `false` to skip |
+| `ENABLE_ALIGNER_MODEL` | `false` | set `true` to enable word-level timestamps |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches KV blocks for shared prefix |
 | `ASR_PORT` | `9002` | default port; overridden by `--port` CLI arg |
 
