@@ -157,18 +157,16 @@ _GPU_MAX_UTIL = 0.75  # maximum utilization for small GPUs (leave room for other
 
 
 def _auto_asr_gpu_util() -> float:
-    """Compute gpu_memory_utilization based on estimated model needs, fitted to FREE GPU memory."""
+    """Compute gpu_memory_utilization as a fraction of total GPU memory."""
     if not torch.cuda.is_available():
         return 0.15
-    free_bytes, _ = torch.cuda.mem_get_info(0)
-    free_gb = free_bytes / 1024**3
-    # Use estimated needs, but cap at reasonable utilization of free memory
-    util = round(min(_ASR_ESTIMATED_GB / free_gb, _GPU_MAX_UTIL), 3)
-    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {_ASR_ESTIMATED_GB:.1f} GB / {free_gb:.1f} GB free)")
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    util = round(min(_ASR_ESTIMATED_GB / total_gb, _GPU_MAX_UTIL), 3)
+    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {_ASR_ESTIMATED_GB:.1f} GB / {total_gb:.1f} GB total)")
     return util
 
 
-def _auto_vl_gpu_util(asr_util: float) -> float:
+def _auto_vl_gpu_util() -> float:
     """Compute gpu_memory_utilization for VL model using actual free GPU memory at call time."""
     if not torch.cuda.is_available():
         return 0.55
@@ -317,7 +315,7 @@ def load_models():
     if VL_MODEL_NAME:
         logger.info(f"Starting VL model server: {VL_MODEL_NAME} on port {VL_PORT} ...")
         vl_util_env = os.getenv("VL_GPU_MEMORY_UTILIZATION", "")
-        vl_util = float(vl_util_env) if vl_util_env else _auto_vl_gpu_util(asr_util if "asr" in models else 0.0)
+        vl_util = float(vl_util_env) if vl_util_env else _auto_vl_gpu_util()
         proc = _start_vl_server(VL_MODEL_NAME, vl_util)
         models["_vl_proc"] = proc
         if _wait_vl_ready():
