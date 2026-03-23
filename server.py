@@ -153,8 +153,8 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 # -----------------------------
 # Estimated GB needed for each component (model weights + KV cache)
 # Updated based on actual measurement: Qwen3-ASR-1.7B weights ~3.87 GB + KV cache buffer
-_ASR_ESTIMATED_GB = 5.0   # 3.87 GB weights + ~1 GB KV cache (max_model_len=2048)
-_ASR_ESTIMATED_GB_4K = 5.5  # weights + ~1.6 GB KV cache (max_model_len=4096, large GPUs)
+_ASR_ESTIMATED_GB = 5.7   # 3.87 GB weights + ~1.8 GB KV cache + overhead (max_model_len=2048, measured on 2080 Ti)
+_ASR_ESTIMATED_GB_4K = 6.0  # weights + ~2 GB KV cache (max_model_len=4096, large GPUs)
 _VL_ESTIMATED_GB = 4.5    # minimum needed for 2B VL model weights + profiling overhead
 _ALIGNER_GB = 1.5  # rough footprint of the 0.6B aligner
 _VL_BUFFER_GB = 1.5  # safety headroom after VL allocation
@@ -234,7 +234,7 @@ def _auto_vl_max_model_len() -> int:
         return 16384
     elif free_gb >= 12:
         return 8192
-    elif free_gb >= 6:
+    elif free_gb >= 12:
         return 4096
     return 2048
 
@@ -260,6 +260,7 @@ def _start_vl_server(model_name: str, vl_util: float) -> subprocess.Popen:
         "--max-model-len",
         str(vl_max_len),
         "--enable-prefix-caching",
+        "--enforce-eager",  # skip CUDA graph compilation — faster startup, less memory spike
     ]
     if torch.cuda.is_available():
         cmd += ["--gpu-memory-utilization", str(vl_util)]
