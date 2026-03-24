@@ -169,32 +169,39 @@ async def stream_audio_segment(ws, audio_int16: np.ndarray, sample_rate: int, co
 async def receiver(ws) -> str:
     """Receives websocket messages and returns the final transcribed text."""
     final_text = ""
-    async for message in ws:
-        try:
-            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            evt = json.loads(message)
-            msg_type = evt.get("type")
-            text = evt.get("text", "")
-            lang = evt.get("language", "")
+    last_partial = ""
+    try:
+        async for message in ws:
+            try:
+                timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                evt = json.loads(message)
+                msg_type = evt.get("type")
+                text = evt.get("text", "")
+                lang = evt.get("language", "")
 
-            if msg_type == "ready":
-                pass
-            elif msg_type == "partial":
-                sys.stdout.write(f"\r[Partial] ({lang}): {text}")
-                sys.stdout.flush()
-            elif msg_type == "final":
-                sys.stdout.write(f"\r[Final] ({lang}): {text}\n")
-                sys.stdout.flush()
-                final_text = text
-            elif msg_type == "error":
-                print(f"\n[{timestamp}] [Error]: {evt.get('message')}")
-            elif msg_type == "info":
-                pass
+                if msg_type == "ready":
+                    pass
+                elif msg_type == "partial":
+                    sys.stdout.write(f"\r[Partial] ({lang}): {text}")
+                    sys.stdout.flush()
+                    last_partial = text
+                elif msg_type == "final":
+                    sys.stdout.write(f"\r[Final] ({lang}): {text}\n")
+                    sys.stdout.flush()
+                    final_text = text
+                    last_partial = ""
+                elif msg_type == "error":
+                    print(f"\n[{timestamp}] [Error]: {evt.get('message')}")
+                elif msg_type == "info":
+                    pass
 
-        except json.JSONDecodeError:
-            print(f"\n[Raw]: {message}")
+            except json.JSONDecodeError:
+                print(f"\n[Raw]: {message}")
+    except Exception:
+        pass
 
-    return final_text
+    # Fall back to last partial if connection closed before "final" was received
+    return final_text or last_partial
 
 
 def apply_vad(audio_int16: np.ndarray, sample_rate: int, min_silence_duration_s: float = 1.0) -> list[tuple[int, int]]:

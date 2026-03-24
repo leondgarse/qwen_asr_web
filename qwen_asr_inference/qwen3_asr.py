@@ -738,29 +738,27 @@ class Qwen3ASRModel:
                 cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
                 keep_frac = (total_samples - trim_samples) / total_samples
                 keep_token_end = max(0, int(len(cur_ids) * keep_frac))
-                new_confirmed = self.processor.tokenizer.decode(cur_ids[:keep_token_end]) if keep_token_end > 0 else ""
-                # Advance: drop oldest audio chunk and update confirmed prefix + raw decoded
+                trimmed_text = self.processor.tokenizer.decode(cur_ids[:keep_token_end]) if keep_token_end > 0 else ""
+                # Advance: drop oldest audio chunk and accumulate confirmed prefix
                 state.audio_accum = state.audio_accum[trim_samples:]
-                state._confirmed_prefix = new_confirmed
+                state._confirmed_prefix = state._confirmed_prefix + trimmed_text
                 # _raw_decoded now refers only to the remaining (windowed) audio portion
                 state._raw_decoded = self.processor.tokenizer.decode(cur_ids[keep_token_end:]) if keep_token_end < len(cur_ids) else ""
 
-            # Build prefix with rollback strategy
+            # Build prefix with rollback strategy (window-relative only; confirmed prefix is
+            # NOT fed back into the prompt to avoid exceeding max_model_len).
             prefix = ""
-            if state.chunk_id < state.unfixed_chunk_num:
-                prefix = state._confirmed_prefix
-            else:
+            if state.chunk_id >= state.unfixed_chunk_num:
                 cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
                 k = int(state.unfixed_token_num)
                 while True:
                     end_idx = max(0, len(cur_ids) - k)
-                    suffix = self.processor.tokenizer.decode(cur_ids[:end_idx]) if end_idx > 0 else ""
-                    if "\ufffd" not in suffix:
-                        prefix = state._confirmed_prefix + suffix
+                    prefix = self.processor.tokenizer.decode(cur_ids[:end_idx]) if end_idx > 0 else ""
+                    if "\ufffd" not in prefix:
                         break
                     else:
                         if end_idx == 0:
-                            prefix = state._confirmed_prefix
+                            prefix = ""
                             break
                         k += 1
 
@@ -773,11 +771,10 @@ class Qwen3ASRModel:
             gen_text = outputs[0].outputs[0].text
 
             # _raw_decoded tracks only the current window's text (excluding _confirmed_prefix).
-            # Full text for output = _confirmed_prefix + window text.
-            window_decoded = (prefix[len(state._confirmed_prefix):] + gen_text) if prefix else gen_text
-            state._raw_decoded = window_decoded
+            # Full output text = _confirmed_prefix + window text.
+            state._raw_decoded = (prefix + gen_text) if prefix else gen_text
 
-            full_decoded = state._confirmed_prefix + window_decoded
+            full_decoded = state._confirmed_prefix + state._raw_decoded
             lang, txt = parse_asr_output(full_decoded, user_language=state.force_language)
             state.language = lang
             state.text = txt
@@ -835,20 +832,17 @@ class Qwen3ASRModel:
             cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
             keep_frac = (total_samples - trim_samples) / total_samples
             keep_token_end = max(0, int(len(cur_ids) * keep_frac))
-            new_confirmed = self.processor.tokenizer.decode(cur_ids[:keep_token_end]) if keep_token_end > 0 else ""
+            trimmed_text = self.processor.tokenizer.decode(cur_ids[:keep_token_end]) if keep_token_end > 0 else ""
             state.audio_accum = state.audio_accum[trim_samples:]
-            state._confirmed_prefix = new_confirmed
+            state._confirmed_prefix = state._confirmed_prefix + trimmed_text
             state._raw_decoded = self.processor.tokenizer.decode(cur_ids[keep_token_end:]) if keep_token_end < len(cur_ids) else ""
 
-        # Prefix rollback strategy (same as per-chunk)
+        # Prefix rollback strategy (window-relative only; confirmed prefix not fed to model).
         prefix = ""
-        if state.chunk_id < state.unfixed_chunk_num:
-            prefix = state._confirmed_prefix
-        else:
+        if state.chunk_id >= state.unfixed_chunk_num:
             cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
             end_idx = max(1, len(cur_ids) - int(state.unfixed_token_num))
-            suffix = self.processor.tokenizer.decode(cur_ids[:end_idx])
-            prefix = state._confirmed_prefix + suffix
+            prefix = self.processor.tokenizer.decode(cur_ids[:end_idx])
 
         prompt = state.prompt_raw + prefix
 
@@ -862,9 +856,8 @@ class Qwen3ASRModel:
             # Remove prompt from output
             gen_text = self.processor.batch_decode(gen[:, inputs.input_ids.shape[1] :], skip_special_tokens=True)[0]
 
-        window_decoded = (prefix[len(state._confirmed_prefix):] + gen_text) if prefix else gen_text
-        state._raw_decoded = window_decoded
-        full_decoded = state._confirmed_prefix + window_decoded
+        state._raw_decoded = (prefix + gen_text) if prefix else gen_text
+        full_decoded = state._confirmed_prefix + state._raw_decoded
         lang, txt = parse_asr_output(full_decoded, user_language=state.force_language)
         state.language = lang
         state.text = txt
