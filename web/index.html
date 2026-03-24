@@ -1133,10 +1133,13 @@ async function autoTranslateEntry(entryEl, entry) {
     const {translated} = await resp.json();
     entry.translated = translated;
     saveState(); pushToServer();
+    const out = document.getElementById('tr-output');
+    const pinned = isAtBottom(out);
     const body = entryEl.querySelector('.tr-body');
     let el = body.querySelector('.tr-translated');
     if (!el) { el=document.createElement('div'); el.className='tr-translated'; body.appendChild(el); }
     el.textContent = translated;
+    if (pinned) scrollBottom(out);
   } catch(e) { console.error('Auto-translate error:', e); }
 }
 function deleteSegment(idx) {

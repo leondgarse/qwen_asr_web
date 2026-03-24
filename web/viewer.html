@@ -696,6 +696,7 @@ function renderTranscription() {
   const out     = document.getElementById('tr-output');
   const empty   = document.getElementById('tr-empty');
   const partial = document.getElementById('partial-entry');
+  const pinned  = isAtBottom(out);
 
   if (!segments.length) {
     out.querySelectorAll('.tr-entry').forEach(el => el.remove());
@@ -733,7 +734,7 @@ function renderTranscription() {
     if (el.textContent !== seg.translated) el.textContent = seg.translated;
   }
 
-  scrollBottomIfPinned(out);
+  if (pinned) scrollBottom(out);
 }
 
 // ═══════════════════════════════════════════════════════════
