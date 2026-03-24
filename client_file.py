@@ -20,6 +20,7 @@ from tqdm import tqdm
 SAMPLING_RATE = 16000
 CHANNELS = 1
 MIN_SEGMENT_DURATION_S = 1.5  # skip VAD segments shorter than this (slide transitions, applause pops)
+MAX_SEGMENT_DURATION_S = 120.0  # force-split segments longer than this at the lowest-energy point
 CONTAMINATION_WINDOW = 6  # consecutive words that must appear verbatim in context to flag contamination
 
 
@@ -246,6 +247,40 @@ def apply_vad(audio_int16: np.ndarray, sample_rate: int, min_silence_duration_s:
     return segments
 
 
+def split_long_segment(audio_int16: np.ndarray, sample_rate: int, max_duration_s: float) -> list[tuple[int, int]]:
+    """
+    Recursively split a segment that exceeds max_duration_s by cutting at the lowest-energy
+    point within a search window around the midpoint. Returns a list of (start, end) sample indices
+    relative to the start of the input array.
+    """
+    total_samples = len(audio_int16)
+    max_samples = int(max_duration_s * sample_rate)
+
+    if total_samples <= max_samples:
+        return [(0, total_samples)]
+
+    # Search for the lowest-energy point in a ±10% window around the midpoint
+    mid = total_samples // 2
+    search_half = max(1, total_samples // 10)
+    search_start = max(0, mid - search_half)
+    search_end = min(total_samples, mid + search_half)
+
+    # Use 30ms frames to find lowest RMS energy
+    frame_size = int(sample_rate * 0.03)
+    best_idx = mid
+    best_energy = float("inf")
+    for i in range(search_start, search_end - frame_size, frame_size):
+        frame = audio_int16[i : i + frame_size].astype(np.float32)
+        energy = float(np.mean(frame ** 2))
+        if energy < best_energy:
+            best_energy = energy
+            best_idx = i + frame_size // 2
+
+    left = split_long_segment(audio_int16[:best_idx], sample_rate, max_duration_s)
+    right = split_long_segment(audio_int16[best_idx:], sample_rate, max_duration_s)
+    return left + [(best_idx + s, best_idx + e) for s, e in right]
+
+
 def read_audio(file_path: str) -> tuple[np.ndarray, int]:
     """Read audio file, using ffmpeg for formats soundfile can't handle (e.g. mp3, m4a)."""
     try:
@@ -327,28 +362,39 @@ async def process_file(
                 pbar.update(1)
                 continue
 
-            tqdm.write(f"\nProcessing {timestamp_str}...")
-            segment_audio = audio_data[start_idx:end_idx]
+            # Force-split oversized segments at lowest-energy points
+            segment_audio_full = audio_data[start_idx:end_idx]
+            sub_splits = split_long_segment(segment_audio_full, SAMPLING_RATE, MAX_SEGMENT_DURATION_S)
+            if len(sub_splits) > 1:
+                tqdm.write(f"\nSplitting {timestamp_str} ({segment_duration:.0f}s) into {len(sub_splits)} sub-segments...")
 
-            try:
-                async with websockets.connect(endpoint, max_size=None) as ws:
-                    sender_task = asyncio.create_task(stream_audio_segment(ws, segment_audio, SAMPLING_RATE, context=context))
-                    receiver_task = asyncio.create_task(receiver(ws))
+            for sub_start, sub_end in sub_splits:
+                abs_start = start_idx + sub_start
+                abs_end = start_idx + sub_end
+                sub_start_time = timedelta(seconds=abs_start / SAMPLING_RATE)
+                sub_timestamp_str = f"[{timedelta(seconds=abs_start/SAMPLING_RATE)} - {timedelta(seconds=abs_end/SAMPLING_RATE)}]"
+                tqdm.write(f"\nProcessing {sub_timestamp_str}...")
+                segment_audio = audio_data[abs_start:abs_end]
 
-                    _, text = await asyncio.gather(sender_task, receiver_task)
+                try:
+                    async with websockets.connect(endpoint, max_size=None, ping_interval=None) as ws:
+                        sender_task = asyncio.create_task(stream_audio_segment(ws, segment_audio, SAMPLING_RATE, context=context))
+                        receiver_task = asyncio.create_task(receiver(ws))
 
-                    text = text.strip()
-                    if not text:
-                        pass
-                    elif is_context_contamination(text, context):
-                        tqdm.write(f"Skipping {timestamp_str} (context contamination detected)")
-                    else:
-                        ts_str = str((start_time + offset)).split(".")[0]
-                        with open(txt_output_file, "a", encoding="utf-8") as f:
-                            f.write(f"[{ts_str}] {text}\n")
+                        _, text = await asyncio.gather(sender_task, receiver_task)
 
-            except Exception as e:
-                tqdm.write(f"Failed to process segment {timestamp_str}: {e}")
+                        text = text.strip()
+                        if not text:
+                            pass
+                        elif is_context_contamination(text, context):
+                            tqdm.write(f"Skipping {sub_timestamp_str} (context contamination detected)")
+                        else:
+                            ts_str = str((sub_start_time + offset)).split(".")[0]
+                            with open(txt_output_file, "a", encoding="utf-8") as f:
+                                f.write(f"[{ts_str}] {text}\n")
+
+                except Exception as e:
+                    tqdm.write(f"Failed to process segment {sub_timestamp_str}: {e}")
 
             pbar.update(1)
 
