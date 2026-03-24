@@ -131,10 +131,10 @@ def parse_time_str(time_str: str) -> timedelta:
     if len(parts) == 3:
         h, m, s = map(int, parts)
     elif len(parts) == 2:
-        h = 0
-        m, s = map(int, parts)
+        h, m = map(int, parts)
+        s = 0
     else:
-        h, m, s = 0, 0, int(parts[0])
+        h, m, s = int(parts[0]), 0, 0
     return timedelta(hours=h, minutes=m, seconds=s)
 
 
@@ -363,7 +363,7 @@ async def main():
     )
     parser.add_argument("--demucs-device", default="cuda", help="Device for demucs: cuda (default) or cpu / cuda:N.")
     parser.add_argument("--separated-dir", default=None, help="Where to store/reuse demucs output (default: separated/ next to the audio file).")
-    parser.add_argument("--offset", default=None, help="Start time offset added to all timestamps (e.g. 1:30:00 for recordings starting mid-event).")
+    parser.add_argument("--offset", default=None, help="Start time offset added to all timestamps. Format: hh:mm:ss, hh:mm (hours:minutes), or hh (hours). E.g. 18:00 = 18 hours, 1:30:00 = 1.5 hours.")
     args = parser.parse_args()
 
     endpoint = args.endpoint

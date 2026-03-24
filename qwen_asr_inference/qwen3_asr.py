@@ -117,6 +117,7 @@ class ASRStreamingState:
     unfixed_token_num: int
     chunk_size_sec: float
     chunk_size_samples: int
+    max_audio_samples: int
 
     chunk_id: int
     buffer: np.ndarray
@@ -129,6 +130,7 @@ class ASRStreamingState:
     language: str
     text: str
     _raw_decoded: str
+    _confirmed_prefix: str
 
 
 class Qwen3ASRModel:
@@ -581,6 +583,7 @@ class Qwen3ASRModel:
         unfixed_chunk_num: int = 2,
         unfixed_token_num: int = 5,
         chunk_size_sec: float = 2.0,
+        max_audio_sec: float = 60.0,
     ) -> ASRStreamingState:
         """
         Initialize streaming ASR state for a single stream.
@@ -629,6 +632,9 @@ class Qwen3ASRModel:
         chunk_size_samples = int(round(float(chunk_size_sec) * SAMPLE_RATE))
         chunk_size_samples = max(1, chunk_size_samples)
 
+        max_audio_samples = int(round(float(max_audio_sec) * SAMPLE_RATE))
+        max_audio_samples = max(chunk_size_samples, max_audio_samples)
+
         prompt_raw = self._build_text_prompt(context=context, force_language=force_language)
 
         return ASRStreamingState(
@@ -636,6 +642,7 @@ class Qwen3ASRModel:
             unfixed_token_num=int(unfixed_token_num),
             chunk_size_sec=float(chunk_size_sec),
             chunk_size_samples=int(chunk_size_samples),
+            max_audio_samples=max_audio_samples,
             chunk_id=0,
             buffer=np.zeros((0,), dtype=np.float32),
             audio_accum=np.zeros((0,), dtype=np.float32),
@@ -645,6 +652,7 @@ class Qwen3ASRModel:
             language="",
             text="",
             _raw_decoded="",
+            _confirmed_prefix="",
         )
 
     def streaming_transcribe(self, pcm16k: np.ndarray, state: ASRStreamingState) -> ASRStreamingState:
@@ -720,21 +728,39 @@ class Qwen3ASRModel:
             else:
                 state.audio_accum = np.concatenate([state.audio_accum, chunk], axis=0)
 
+            # Trim oldest audio when accumulated audio exceeds max_audio_samples.
+            # Carry forward a proportional slice of _raw_decoded as confirmed_prefix so
+            # transcription continuity is preserved across the sliding window.
+            while state.audio_accum.shape[0] > state.max_audio_samples:
+                trim_samples = state.chunk_size_samples
+                total_samples = state.audio_accum.shape[0]
+                # Fraction of audio being trimmed → proportional confirmed text tokens
+                cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
+                keep_frac = (total_samples - trim_samples) / total_samples
+                keep_token_end = max(0, int(len(cur_ids) * keep_frac))
+                new_confirmed = self.processor.tokenizer.decode(cur_ids[:keep_token_end]) if keep_token_end > 0 else ""
+                # Advance: drop oldest audio chunk and update confirmed prefix + raw decoded
+                state.audio_accum = state.audio_accum[trim_samples:]
+                state._confirmed_prefix = new_confirmed
+                # _raw_decoded now refers only to the remaining (windowed) audio portion
+                state._raw_decoded = self.processor.tokenizer.decode(cur_ids[keep_token_end:]) if keep_token_end < len(cur_ids) else ""
+
             # Build prefix with rollback strategy
             prefix = ""
             if state.chunk_id < state.unfixed_chunk_num:
-                prefix = ""
+                prefix = state._confirmed_prefix
             else:
                 cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
                 k = int(state.unfixed_token_num)
                 while True:
                     end_idx = max(0, len(cur_ids) - k)
-                    prefix = self.processor.tokenizer.decode(cur_ids[:end_idx]) if end_idx > 0 else ""
-                    if "\ufffd" not in prefix:
+                    suffix = self.processor.tokenizer.decode(cur_ids[:end_idx]) if end_idx > 0 else ""
+                    if "\ufffd" not in suffix:
+                        prefix = state._confirmed_prefix + suffix
                         break
                     else:
                         if end_idx == 0:
-                            prefix = ""
+                            prefix = state._confirmed_prefix
                             break
                         k += 1
 
@@ -746,10 +772,13 @@ class Qwen3ASRModel:
             outputs = self.model.generate([inp], sampling_params=self.sampling_params, use_tqdm=False)
             gen_text = outputs[0].outputs[0].text
 
-            # Accumulate raw decoded (then parse to lang/text)
-            state._raw_decoded = (prefix + gen_text) if prefix is not None else gen_text
+            # _raw_decoded tracks only the current window's text (excluding _confirmed_prefix).
+            # Full text for output = _confirmed_prefix + window text.
+            window_decoded = (prefix[len(state._confirmed_prefix):] + gen_text) if prefix else gen_text
+            state._raw_decoded = window_decoded
 
-            lang, txt = parse_asr_output(state._raw_decoded, user_language=state.force_language)
+            full_decoded = state._confirmed_prefix + window_decoded
+            lang, txt = parse_asr_output(full_decoded, user_language=state.force_language)
             state.language = lang
             state.text = txt
 
@@ -799,14 +828,27 @@ class Qwen3ASRModel:
         else:
             state.audio_accum = np.concatenate([state.audio_accum, tail], axis=0)
 
+        # Trim oldest audio when accumulated audio exceeds max_audio_samples (same as streaming_transcribe).
+        while state.audio_accum.shape[0] > state.max_audio_samples:
+            trim_samples = state.chunk_size_samples
+            total_samples = state.audio_accum.shape[0]
+            cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
+            keep_frac = (total_samples - trim_samples) / total_samples
+            keep_token_end = max(0, int(len(cur_ids) * keep_frac))
+            new_confirmed = self.processor.tokenizer.decode(cur_ids[:keep_token_end]) if keep_token_end > 0 else ""
+            state.audio_accum = state.audio_accum[trim_samples:]
+            state._confirmed_prefix = new_confirmed
+            state._raw_decoded = self.processor.tokenizer.decode(cur_ids[keep_token_end:]) if keep_token_end < len(cur_ids) else ""
+
         # Prefix rollback strategy (same as per-chunk)
         prefix = ""
         if state.chunk_id < state.unfixed_chunk_num:
-            prefix = ""
+            prefix = state._confirmed_prefix
         else:
             cur_ids = self.processor.tokenizer.encode(state._raw_decoded)
             end_idx = max(1, len(cur_ids) - int(state.unfixed_token_num))
-            prefix = self.processor.tokenizer.decode(cur_ids[:end_idx])
+            suffix = self.processor.tokenizer.decode(cur_ids[:end_idx])
+            prefix = state._confirmed_prefix + suffix
 
         prompt = state.prompt_raw + prefix
 
@@ -820,8 +862,10 @@ class Qwen3ASRModel:
             # Remove prompt from output
             gen_text = self.processor.batch_decode(gen[:, inputs.input_ids.shape[1] :], skip_special_tokens=True)[0]
 
-        state._raw_decoded = (prefix + gen_text) if prefix is not None else gen_text
-        lang, txt = parse_asr_output(state._raw_decoded, user_language=state.force_language)
+        window_decoded = (prefix[len(state._confirmed_prefix):] + gen_text) if prefix else gen_text
+        state._raw_decoded = window_decoded
+        full_decoded = state._confirmed_prefix + window_decoded
+        lang, txt = parse_asr_output(full_decoded, user_language=state.force_language)
         state.language = lang
         state.text = txt
 

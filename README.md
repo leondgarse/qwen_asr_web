@@ -4,7 +4,7 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 
 ## Features
 
-- **File transcription** — MP3/WAV/M4A/video audio → timestamped JSONL
+- **File transcription** — MP3/WAV/M4A/video audio → timestamped TXT
 - **Vocal extraction** — isolates human voice from background music before ASR (via [demucs](https://github.com/facebookresearch/demucs))
 - **VAD segmentation** — WebRTC VAD splits audio into speech segments
 - **Vocabulary context** — feed a PDF or Markdown document to improve domain-specific terminology
@@ -38,9 +38,11 @@ pip install -r requirements.txt
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python server.py
-CUDA_VISIBLE_DEVICES=0 python server.py --port 9000          # custom port
-CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl             # + Qwen3-VL-2B-Instruct
-CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl Qwen/Qwen2.5-VL-7B-Instruct  # custom VL model
+CUDA_VISIBLE_DEVICES=0 python server.py --port 9000                             # custom port
+CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl                                # + Qwen3-VL-2B-Instruct
+CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl Qwen/Qwen2.5-VL-7B-Instruct   # custom VL model
+CUDA_VISIBLE_DEVICES=0,1 python server.py --qwenvl --vl-device 1                # VL on GPU 1, ASR on GPU 0
+CUDA_VISIBLE_DEVICES=0,1 python server.py --asr-device 0 --qwenvl --vl-device 1 # explicit GPU assignment
 ```
 
 Poll `GET /health` until `"status": "ready"` before sending requests.
@@ -56,8 +58,10 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 | `VL_MAX_MODEL_LEN` | auto | VL context length; auto-sized from free GPU (max 16384) |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |
 | `ASR_PORT` | `9002` | Default port; overridden by `--port` CLI arg |
+| `ASR_DEVICE` | `""` | GPU index for ASR model (overridden by `--asr-device`) |
+| `VL_DEVICE` | `""` | GPU index for VL subprocess (overridden by `--vl-device`); empty = share GPU with ASR |
 | `ENABLE_ASR_MODEL` | `true` | |
-| `ENABLE_ALIGNER_MODEL` | `true` | |
+| `ENABLE_ALIGNER_MODEL` | `false` | Set `true` to enable word-level timestamps |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches context prefix KV blocks across utterances |
 
 ### 2. Transcribe a file
@@ -75,10 +79,12 @@ python client_file.py event_recording.mp3 --vocal-extraction --context slides.md
 Timestamps can be offset (e.g. recordings starting mid-event):
 
 ```bash
-python client_file.py event_recording.mp3 --offset 1:30:00
+python client_file.py event_recording.mp3 --offset 1:30:00   # hh:mm:ss
+python client_file.py event_recording.mp3 --offset 18:00     # hh:mm
+python client_file.py event_recording.mp3 --offset 18        # hh (hours)
 ```
 
-Output: `transcription_streaming.txt` — one line per speech segment:
+Output: `<stem>.txt` — one line per speech segment:
 
 ```
 [0:01:23] So clustering is an unsupervised learning task.
@@ -92,7 +98,7 @@ input audio
   → resample to 16kHz mono
   → WebRTC VAD (level 2)     split into speech segments
   → stream over WebSocket    with optional vocabulary context
-  → transcription_streaming.txt
+  → <stem>.txt
 ```
 
 > **When to use `--vocal-extraction`:** event recordings (conferences, meetups) with background music and PA noise. Without it the ASR model hallucinates repetitive generic phrases when fed music. For clean lecture/interview audio it is unnecessary overhead (adds several minutes of CPU time). Separated tracks are cached in `separated/` next to the audio file and reused on subsequent runs.
@@ -123,7 +129,7 @@ If stuck on `[Recording...]`, background noise is triggering speech detection �
 
 | Option | Default | Effect |
 |---|---|---|
-| `--offset` | `0:00:00` | Add time offset to all timestamps (e.g., `1:30:00` for recordings starting mid-event) |
+| `--offset` | `0:00:00` | Add time offset to all timestamps. Format: `hh:mm:ss`, `hh:mm`, or `hh` (e.g. `18:00` = 18 h, `1:30:00` = 1.5 h) |
 | `--output` | `<stem>.txt` | Custom output file path |
 
 ### 4. Transcribe a video file
