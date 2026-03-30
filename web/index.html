@@ -398,14 +398,14 @@ body::after {
   letter-spacing: .14em;
   flex: 1;
 }
-#settings-btn, #export-btn {
+#settings-btn, #export-btn, #popout-btn {
   background: none; border: none;
   color: var(--muted); cursor: pointer;
   font-size: 15px; padding: 4px 6px;
   border-radius: 6px; line-height: 1;
   transition: color .15s, background .15s;
 }
-#settings-btn:hover, #export-btn:hover {
+#settings-btn:hover, #export-btn:hover, #popout-btn:hover {
   color: var(--text); background: var(--bg3);
 }
 #translate-lang { display: none; }
@@ -473,7 +473,17 @@ body::after {
   height: 30px;
 }
 #lang-select { width: 90px; }
-#lang-select:focus, #translate-lang-main:focus { border-color: var(--accent); }
+#lang-select:focus, #translate-lang-main:focus, #audio-src-select:focus { border-color: var(--accent); }
+#audio-src-select {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  color: var(--text); border-radius: 8px;
+  padding: 5px 8px; font-size: 12px;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer; outline: none;
+  transition: border-color .15s;
+  height: 30px;
+}
 #translate-lang-wrap { align-items: center; gap: 5px; }
 #translate-lang-wrap > span:first-child { font-size: 12px; color: var(--muted); }
 
@@ -714,6 +724,7 @@ body::after {
           <option value="German">→ DE</option>
           <option value="Spanish">→ ES</option>
         </select>
+        <button id="popout-btn" title="Pop out transcription window (pin with your OS window manager for always-on-top)">⧉</button>
         <button id="export-btn" title="Export transcription as TXT">&#8659;</button>
         <button id="settings-btn" title="Server settings">⚙</button>
       </div>
@@ -731,6 +742,10 @@ body::after {
       </div>
 
       <div id="lang-row">
+        <select id="audio-src-select" title="Audio source">
+          <option value="mic">🎙 Mic</option>
+          <option value="spk">🔊 Speaker</option>
+        </select>
         <button id="mic-btn" class="idle">
           <span id="mic-dot"></span>
           <span id="mic-label">Record</span>
@@ -830,13 +845,16 @@ function updateSrvLabel() {
   document.getElementById('srv-current').textContent = `Current: ${host}:${port}`;
 }
 
-document.getElementById('srv-apply').addEventListener('click', () => {
+document.getElementById('srv-apply').addEventListener('click', async () => {
   const host = document.getElementById('srv-host').value.trim() || 'localhost';
   const port = document.getElementById('srv-port').value.trim() || '9002';
   localStorage.setItem('asr_host', host);
   localStorage.setItem('asr_port', port);
   updateSrvLabel();
   document.getElementById('settings-panel').classList.remove('open');
+  fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({asr_host: host, asr_port: parseInt(port)})}).catch(()=>{});
+  fetchModels(host, port);
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -845,9 +863,16 @@ document.getElementById('srv-apply').addEventListener('click', () => {
 const TARGET_SR        = 16000;
 const FRAME_SAMPLES    = 480;       // 30 ms @ 16 kHz
 const SPEECH_TRIGGER   = 5;         // consecutive speech frames to start
-const SILENCE_TRIGGER  = 33;        // consecutive silence frames to end (~1 s)
-const MAX_UTT_FRAMES   = 2000;      // force-flush after ~60 s
-const ENERGY_THRESHOLD = 0.018;     // RMS; tune for your mic / room
+
+// VAD params differ by source: speaker audio is lower-energy and more continuous
+const VAD_PROFILES = {
+  mic: { silenceTrigger: 33,  energyThreshold: 0.018, maxUttFrames: 2000 },  // ~1 s silence
+  spk: { silenceTrigger: 40,  energyThreshold: 0.006, maxUttFrames: 600  },  // ~1.2 s silence, force-flush ~18 s
+};
+function vadProfile() { return VAD_PROFILES[document.getElementById('audio-src-select').value] || VAD_PROFILES.mic; }
+function SILENCE_TRIGGER()  { return vadProfile().silenceTrigger; }
+function ENERGY_THRESHOLD() { return vadProfile().energyThreshold; }
+function MAX_UTT_FRAMES()   { return vadProfile().maxUttFrames; }
 
 // ═══════════════════════════════════════════════════════════
 // App state
@@ -922,8 +947,8 @@ function resampleTo16k(input, fromSR) {
   return out;
 }
 function scrollBottom(el) { el.scrollTop = el.scrollHeight; }
-function isAtBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 60; }
-function scrollBottomIfPinned(el) { if (isAtBottom(el)) scrollBottom(el); }
+function isAtBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 120; }
+function scrollBottomIfPinned(el) { if (isAtBottom(el)) requestAnimationFrame(() => scrollBottom(el)); }
 
 // ═══════════════════════════════════════════════════════════
 // Session management
@@ -1102,6 +1127,8 @@ function makeTrEntry(entry, idx) {
 async function translateSegment(btn, idx) {
   const s=getSession(); if(!s||!s.transcription[idx]) return;
   btn.disabled=true; btn.textContent='…';
+  const out=document.getElementById('tr-output');
+  const pinned=isAtBottom(out);
   try {
     const lang=document.getElementById('translate-lang-main').value;
     const resp=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1114,6 +1141,7 @@ async function translateSegment(btn, idx) {
     let el=body.querySelector('.tr-translated');
     if(!el){el=document.createElement('div');el.className='tr-translated';body.querySelector('.tr-actions').before(el);}
     el.textContent=translated;
+    if(pinned) requestAnimationFrame(()=>scrollBottom(out));
   } catch(e){ console.error('Translation error:',e); }
   btn.disabled=false; btn.textContent='⇄ Translate';
 }
@@ -1126,6 +1154,8 @@ function shouldAutoTranslate() {
 async function autoTranslateEntry(entryEl, entry) {
   if (!shouldAutoTranslate()) return;
   const lang = document.getElementById('translate-lang-main').value;
+  const out = document.getElementById('tr-output');
+  const pinned = isAtBottom(out);  // capture before await
   try {
     const resp = await fetch('/api/translate', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({text: entry.text, target_language: lang})});
@@ -1133,13 +1163,11 @@ async function autoTranslateEntry(entryEl, entry) {
     const {translated} = await resp.json();
     entry.translated = translated;
     saveState(); pushToServer();
-    const out = document.getElementById('tr-output');
-    const pinned = isAtBottom(out);
     const body = entryEl.querySelector('.tr-body');
     let el = body.querySelector('.tr-translated');
     if (!el) { el=document.createElement('div'); el.className='tr-translated'; body.appendChild(el); }
     el.textContent = translated;
-    if (pinned) scrollBottom(out);
+    if (pinned) requestAnimationFrame(() => scrollBottom(out));
   } catch(e) { console.error('Auto-translate error:', e); }
 }
 function deleteSegment(idx) {
@@ -1181,10 +1209,22 @@ function saveSegmentEdit(idx) {
   const txtEl=el.querySelector('.tr-txt');
   const editBtn=el.querySelector('.tr-edit');
   if(!txtEl) return;
+  const oldText=s.transcription[idx].text;
   const newText=txtEl.textContent.trim();
   txtEl.contentEditable='false';
   txtEl.onkeydown=null;
-  if(newText) { s.transcription[idx].text=newText; saveState(); pushToServer(); }
+  if(newText && newText!==oldText) {
+    // Extract words that changed and add them as context hints for future transcriptions
+    const oldWords=new Set(oldText.toLowerCase().split(/\s+/).filter(Boolean));
+    const newWords=newText.split(/\s+/).filter(Boolean);
+    const corrected=newWords.filter(w=>!oldWords.has(w.toLowerCase()));
+    if(corrected.length) {
+      const existing=new Set(contextText.split(/\s+/).map(w=>w.toLowerCase()).filter(Boolean));
+      const novel=corrected.filter(w=>!existing.has(w.toLowerCase()));
+      if(novel.length) contextText=(contextText+' '+novel.join(' ')).trim();
+    }
+    s.transcription[idx].text=newText; saveState(); pushToServer();
+  }
   txtEl.textContent=s.transcription[idx].text;
   editBtn.textContent='✎ Edit'; editBtn.onclick=()=>editSegment(idx);
 }
@@ -1312,7 +1352,7 @@ function startStreamingUtterance() {
 }
 
 function processVADFrame(frame) {
-  const speech = rms(frame) > ENERGY_THRESHOLD;
+  const speech = rms(frame) > ENERGY_THRESHOLD();
   if (!isSpeaking) {
     if (speech) {
       if (++speechCount >= SPEECH_TRIGGER) {
@@ -1325,9 +1365,9 @@ function processVADFrame(frame) {
     if (currentUtt) currentUtt.sendFrame(frame);
     uttFrameCount++;
     if (!speech) {
-      if (++silenceCount >= SILENCE_TRIGGER) flushUtterance();
+      if (++silenceCount >= SILENCE_TRIGGER()) flushUtterance();
     } else { silenceCount = 0; }
-    if (uttFrameCount >= MAX_UTT_FRAMES) flushUtterance();
+    if (uttFrameCount >= MAX_UTT_FRAMES()) flushUtterance();
   }
 }
 
@@ -1348,13 +1388,15 @@ async function startRecording() {
     const msg = isLocalhost
       ? 'Your browser denied microphone access. Check browser permissions.'
       : `Microphone requires a secure context.\n\nOpen this page via http://localhost:8001 instead of the IP address, or serve it over HTTPS.`;
-    alert(msg);
-    return;
+    alert(msg); return;
   }
 
+  const src = document.getElementById('audio-src-select').value;
   try {
     mediaStream=await navigator.mediaDevices.getUserMedia({
-      audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true},
+      audio: src === 'spk'
+        ? {channelCount:1, echoCancellation:false, noiseSuppression:false, autoGainControl:false}
+        : {channelCount:1, echoCancellation:true,  noiseSuppression:true,  autoGainControl:true},
     });
   } catch(e) { alert(`Microphone error: ${e.message}`); return; }
 
@@ -1380,6 +1422,9 @@ async function startRecording() {
   isRecording=true; isSpeaking=false; speechCount=0; silenceCount=0; speechChunks=[];
   document.getElementById('mic-btn').className='active';
   document.getElementById('mic-label').textContent='Stop';
+  document.getElementById('audio-src-select').disabled=true;
+  // If the user closes the tab-share picker or the stream ends externally, stop cleanly
+  mediaStream.getTracks().forEach(t => t.addEventListener('ended', () => { if(isRecording) stopRecording(); }));
   setRecStatus('Listening…');
 }
 
@@ -1390,6 +1435,7 @@ function stopRecording() {
   if(processor){processor.disconnect();processor=null;}
   if(audioCtx){audioCtx.close().catch(()=>{});audioCtx=null;}
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
+  document.getElementById('audio-src-select').disabled=false;
   document.getElementById('mic-btn').className='idle';
   document.getElementById('mic-label').textContent='Record';
   setRecStatus('Idle');
@@ -1426,6 +1472,13 @@ chatInput.addEventListener('keydown',e=>{
 });
 document.getElementById('send-btn').addEventListener('click',sendChatMessage);
 document.getElementById('new-btn').addEventListener('click',createSession);
+document.getElementById('popout-btn').addEventListener('click', () => {
+  const w = 400, h = 620;
+  const left = window.screen.width - w - 20;
+  const top  = Math.max(0, (window.screen.height - h) / 2);
+  window.open('/viewer?popout=1', 'asr-popout',
+    `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=no`);
+});
 
 // ═══════════════════════════════════════════════════════════
 // Resizable panel
@@ -1469,6 +1522,20 @@ document.getElementById('new-btn').addEventListener('click',createSession);
 })();
 
 // ═══════════════════════════════════════════════════════════
+// Persist language selectors
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const langSel  = document.getElementById('lang-select');
+  const transSel = document.getElementById('translate-lang-main');
+  const saved_lang  = localStorage.getItem('asr_lang');
+  const saved_trans = localStorage.getItem('asr_translate_lang');
+  if (saved_lang  && langSel.querySelector(`option[value="${saved_lang}"]`))   langSel.value  = saved_lang;
+  if (saved_trans && transSel.querySelector(`option[value="${saved_trans}"]`)) transSel.value = saved_trans;
+  langSel.addEventListener('change',  () => localStorage.setItem('asr_lang', langSel.value));
+  transSel.addEventListener('change', () => localStorage.setItem('asr_translate_lang', transSel.value));
+})();
+
+// ═══════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════
 updateSrvLabel();
@@ -1497,30 +1564,33 @@ document.getElementById('chat-img-clear').addEventListener('click', () => {
 });
 
 // ── Fetch available chat models ───────────────────────────────
-(async function fetchModels() {
+async function fetchModels(host, port) {
+  if (!host || !port) { const b = getServerBase(); host = b.host; port = b.port; }
   try {
-    const resp = await fetch('/api/models');
+    const resp = await fetch(`/api/models?asr_host=${encodeURIComponent(host)}&asr_port=${encodeURIComponent(port)}`);
     const data = await resp.json();
     const sel = document.getElementById('model-select');
+    const prev = sel.value;
     if (!data.models || !data.models.length) {
       sel.innerHTML = '<option value="auto">No models (set API keys)</option>';
-      return;
+      vlAvailable = false;
+    } else {
+      sel.innerHTML = data.models.map(m =>
+        `<option value="${m.id}">${esc(m.label)}</option>`
+      ).join('');
+      // Restore previous selection if still available
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+      vlAvailable = data.models.some(m => m.id === 'local-vl');
     }
-    sel.innerHTML = data.models.map(m =>
-      `<option value="${m.id}">${esc(m.label)}</option>`
-    ).join('');
-    vlAvailable = data.models.some(m => m.id === 'local-vl');
-    console.log('[models] fetched:', data.models.map(m=>m.id), '| vlAvailable:', vlAvailable);
-    if (vlAvailable) {
-      document.getElementById('translate-lang-wrap').style.display = 'flex';
-      renderTranscriptionPanel();  // re-render so existing segments get the ⇄ button
-    }
+    document.getElementById('translate-lang-wrap').style.display = vlAvailable ? 'flex' : 'none';
+    renderTranscriptionPanel();
     updateImgBtn();
-    document.getElementById('model-select').addEventListener('change', updateImgBtn);
   } catch(e) {
     console.error('Failed to fetch models:', e);
   }
-})();
+}
+document.getElementById('model-select').addEventListener('change', updateImgBtn);
+fetchModels();
 </script>
 <div id="lightbox" onclick="closeLightbox()"><img id="lightbox-img" src="" alt=""></div>
 <script>

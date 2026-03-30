@@ -471,6 +471,28 @@ body::after {
     min-width: 0; width: calc(100vw - 32px);
   }
 }
+
+/* ── Popout mode (transcription-only floating window) ── */
+body.popout-mode #topbar  { display: none; }
+body.popout-mode #tab-bar { display: none; }
+body.popout-mode #resizer { display: none; }
+body.popout-mode #chat    { display: none !important; }
+body.popout-mode #main    { flex: 1; }
+body.popout-mode #transcription {
+  width: 100% !important;
+  min-width: 0 !important;
+  border: none !important;
+  flex: 1;
+}
+body.popout-mode #tr-hd {
+  padding: 8px 10px;
+}
+body.popout-mode .tr-entry {
+  padding: 7px 10px;
+}
+body.popout-mode .tr-txt {
+  font-size: 13px;
+}
 </style>
 </head>
 <body>
@@ -936,6 +958,14 @@ document.getElementById('toggle-translation-btn').addEventListener('click', () =
     }
   });
 })();
+
+// ═══════════════════════════════════════════════════════════
+// Popout mode
+// ═══════════════════════════════════════════════════════════
+if (new URLSearchParams(location.search).get('popout') === '1') {
+  document.body.classList.add('popout-mode');
+  document.title = 'ASR Live';
+}
 
 // ═══════════════════════════════════════════════════════════
 // Init

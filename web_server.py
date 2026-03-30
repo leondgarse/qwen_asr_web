@@ -59,12 +59,30 @@ async def _notify_viewers(payload: str) -> None:
             pass  # slow viewer; they'll catch up on reconnect
 
 
+# ── Config file (persists ASR host/port set via the web UI) ──
+_CONFIG_FILE = Path(__file__).parent / "asr_config.json"
+
+def _load_config() -> dict:
+    try:
+        return json.loads(_CONFIG_FILE.read_text())
+    except Exception:
+        return {}
+
+def _save_config(data: dict) -> None:
+    try:
+        existing = _load_config()
+        existing.update(data)
+        _CONFIG_FILE.write_text(json.dumps(existing, indent=2))
+    except Exception as e:
+        logger.warning(f"Failed to save config: {e}")
+
 # ── Parse CLI args ────────────────────────────────────────────
 def _parse_args():
+    cfg = _load_config()
     parser = argparse.ArgumentParser(description="Qwen3-ASR Studio web server")
-    parser.add_argument("--asr-host", default=os.getenv("ASR_HOST", "localhost"),
+    parser.add_argument("--asr-host", default=os.getenv("ASR_HOST", cfg.get("asr_host", "localhost")),
                         help="ASR server host (env: ASR_HOST, default: localhost)")
-    parser.add_argument("--asr-port", type=int, default=int(os.getenv("ASR_PORT", "9002")),
+    parser.add_argument("--asr-port", type=int, default=int(os.getenv("ASR_PORT", cfg.get("asr_port", 9002))),
                         help="ASR server port (env: ASR_PORT, default: 9002)")
     parser.add_argument("--port", type=int, default=8001,
                         help="Web server port (default: 8001)")
@@ -81,26 +99,37 @@ _vl_available = False
 _vl_info: dict = {}  # {"model": ..., "port": ...}
 
 
-async def _check_vl() -> bool:
-    """Lazy check whether the VL server on ASR host is up. Caches positive result."""
-    global _vl_checked, _vl_available, _vl_info
-    if _vl_checked and _vl_available:
+async def _check_vl(override_host: str | None = None, override_port: int | None = None) -> bool:
+    """Lazy check whether the VL server on ASR host is up. Caches positive result.
+    If override_host/port are provided and VL is found there, update globals so all
+    subsequent calls (translate, chat) use the new address."""
+    global _vl_checked, _vl_available, _vl_info, ASR_HOST, ASR_PORT
+    host = override_host or ASR_HOST
+    port = override_port or ASR_PORT
+    is_override = (override_host and override_host != ASR_HOST) or (override_port and override_port != ASR_PORT)
+    if not is_override and _vl_checked and _vl_available:
         return True
     try:
         import httpx
 
         async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"http://{ASR_HOST}:{ASR_PORT}/vl/health")
+            r = await client.get(f"http://{host}:{port}/vl/health")
             info = r.json()
-            _vl_available = info.get("enabled", False)
-            if _vl_available:
+            available = info.get("enabled", False)
+            _vl_available = available
+            if available:
                 _vl_info = info
                 _vl_checked = True
-            logger.info(f"VL health check -> {info} | vl_url={_vl_oai_url()}")
+                # Update globals so translate/chat use the correct address
+                ASR_HOST = host
+                ASR_PORT = port
+            logger.info(f"VL health check -> {info} | host={host}:{port}")
+            return available
     except Exception as e:
         logger.warning(f"VL health check failed: {e}")
         _vl_available = False
-    return _vl_available
+        _vl_checked = False
+        return False
 
 
 def _vl_oai_url() -> str:
@@ -262,13 +291,21 @@ async def stream_session(request: Request):
     return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@app.post("/api/config")
+async def save_config(req: Request):
+    data = await req.json()
+    _save_config(data)
+    return {"ok": True}
+
+
 @app.get("/api/models")
-async def list_models(all: bool = False):
+async def list_models(all: bool = False, asr_host: str = "", asr_port: int = 0):
     if all:
         result = [{"id": k, "label": v["label"]} for k, v in MODELS.items()]
     else:
         result = available_models()
-    if await _check_vl():
+    vl_ok = await _check_vl(override_host=asr_host or None, override_port=asr_port or None)
+    if vl_ok:
         label = (_vl_info.get("model") or "").split("/")[-1] or "Qwen-VL"
         result.insert(0, {"id": "local-vl", "label": f"Local VL ({label})"})
     return {"models": result}
