@@ -269,9 +269,25 @@ body::after {
   margin-top: 5px;
   font-family: 'Space Mono', monospace;
   letter-spacing: .04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.msg.user .msg-time { text-align: right; }
-.msg.assistant .msg-time { text-align: left; }
+.msg.user .msg-time { justify-content: flex-end; }
+.msg.assistant .msg-time { justify-content: flex-start; }
+.msg-save {
+  opacity: 0;
+  transition: opacity .15s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 2px;
+  line-height: 1;
+}
+.msg-save:hover { color: var(--accent); }
+.msg:hover .msg-save { opacity: 1; }
 
 .msg-img-thumb {
   max-height: 120px; max-width: 220px;
@@ -913,7 +929,36 @@ let currentUtt = null;
 function uid()    { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function fmtTime(d=new Date()) { return d.toTimeString().slice(0,8); }
 function esc(s)   { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function renderMd(s) { return typeof marked !== 'undefined' ? marked.parse(s) : esc(s).replace(/\n/g,'<br>'); }
+function normalizeMermaid(s) {
+  const mermaidKeywords = /^(graph\s+(TD|LR|RL|BT|TB)|flowchart\s+(TD|LR|RL|BT|TB)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|mindmap|journey|timeline|quadrantChart|xychart-beta)/;
+  const lines = s.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    // Skip lines already inside a fenced code block
+    if (lines[i].trimStart().startsWith('```')) {
+      out.push(lines[i++]);
+      while (i < lines.length) {
+        out.push(lines[i]);
+        if (lines[i].trimStart().startsWith('```')) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    // Detect bare mermaid block: a line matching a mermaid keyword (possibly indented)
+    if (mermaidKeywords.test(lines[i].trim())) {
+      out.push('```mermaid');
+      while (i < lines.length && lines[i].trim() !== '') {
+        out.push(lines[i++]);
+      }
+      out.push('```');
+      continue;
+    }
+    out.push(lines[i++]);
+  }
+  return out.join('\n');
+}
+function renderMd(s) { return typeof marked !== 'undefined' ? marked.parse(normalizeMermaid(s)) : esc(s).replace(/\n/g,'<br>'); }
 
 // Push current session to server for viewer broadcast (fire-and-forget)
 function pushToServer() {
@@ -1019,14 +1064,26 @@ function renderChat() {
     box.innerHTML='<div id="no-session" style="color:var(--muted);margin:auto;text-align:center">No messages yet.<br>Ask a question about the transcription.</div>';
     return;
   }
-  box.innerHTML = s.messages.map(m=>`
+  box.innerHTML = s.messages.map((m,i)=>`
     <div class="msg ${m.role}">
       ${m.image ? `<img class="msg-img-thumb" src="data:${m.image_mime||'image/jpeg'};base64,${m.image}" onclick="openLightbox(this.src)" title="Click to enlarge">` : ''}
       <div class="msg-bubble">${m.role==='assistant' ? renderMd(m.content) : esc(m.content)}</div>
-      <div class="msg-time">${m.time||''}</div>
+      <div class="msg-time">
+        <button class="msg-save" onclick="saveChatMsg(${i})" title="Copy to clipboard">💾</button>
+        <span>${m.time||''}</span>
+      </div>
     </div>`).join('');
   scrollBottom(box);
   scheduleRenderMermaid(box);
+}
+
+function saveChatMsg(idx) {
+  const s=getSession(); if(!s) return;
+  const m=s.messages[idx]; if(!m) return;
+  navigator.clipboard.writeText(m.content).then(()=>{
+    const btn=document.querySelectorAll('.msg-save')[idx];
+    if(btn){ btn.textContent='✓'; setTimeout(()=>{ btn.textContent='💾'; },1200); }
+  });
 }
 
 async function sendChatMessage() {

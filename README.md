@@ -2,6 +2,8 @@
 
 Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), with a FastAPI backend and clients for files, microphone, and video.
 
+![Web UI overview](qwen_asr_web.jpg)
+
 ## Features
 
 - **File transcription** — MP3/WAV/M4A/video audio → timestamped TXT
@@ -14,6 +16,8 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 - **Microphone input** — live transcription from system mic
 - **Web UI** — instructor interface with session management, live mic transcription, AI chat, segment translation, and export
 - **Viewer page** — read-only live view for students; receives real-time transcription, partials, and translations via SSE; includes AI chat using the instructor's API keys
+- **Pop-out window** — ⧉ button opens a floating transcription-only viewer that can be pinned on top via the OS window manager
+- **Mermaid diagrams** — AI responses with diagram syntax are rendered as SVG (both fenced blocks and bare VL output)
 - **Qwen-VL** — optional vision-language model (`--qwenvl`) for image-aware chat and per-segment auto-translation
 
 ## Models
@@ -164,13 +168,23 @@ python web_server.py --port 8002
 Then open `http://localhost:8001` (or custom port) in a browser.
 
 **Instructor page** (`/`) — three-panel layout:
-- **Left** — session list, auto-saved to `localStorage`; double-click to rename
+- **Left** — session list, auto-saved to `localStorage`; double-click to rename, ✕ to delete
 - **Middle** — AI chat about the current session's transcription; supports image attachment (🖼) when using Local VL
-- **Right** — live mic transcription with VAD; language selector; auto-translation to target language (shown next to language selector when VL is available); PDF/MD context upload; export (↓)
+- **Right** — live mic transcription with VAD; language selector; auto-translation target selector (shown next to language when VL is available); PDF/MD/TXT context upload (📎); export (⇩)
+
+The left/right panel boundary is a draggable divider; width is saved to `localStorage`.
+
+**Audio source**: toggle between 🎙 Mic (echo/noise cancellation on) and 🔊 Speaker/Line-in (all processing off). Speaker mode uses a shorter max-utterance window (~18 s force-flush) suited for recording desktop audio.
 
 **Auto-translation**: when a target language different from the source is selected, each new transcription segment is automatically translated after it arrives. The `⇄ Translate` / `✕ Delete` buttons appear at the bottom-right of each entry on hover. Translations are broadcast to viewers.
 
 **Image chat**: select `Local VL` in the model dropdown, attach an image (🖼), and ask a question. The image thumbnail is shown in the chat history and can be clicked to enlarge.
+
+**Mermaid diagrams**: AI responses containing Mermaid diagrams are rendered as SVG. Both fenced ` ```mermaid ``` ` blocks and bare diagram syntax output by VL models (e.g. `graph TD`, `flowchart`, `sequenceDiagram`) are supported.
+
+**Pop-out transcription window**: click ⧉ in the transcription panel header to open a floating 400×620 px viewer window. It receives live updates via SSE and can be pinned always-on-top using the OS window manager — useful for monitoring transcription while working in another app.
+
+**Settings** (⚙): collapsible panel in the transcription header to configure ASR server host/port. Settings are saved to `localStorage` and synced to `web_server.py` via `POST /api/config`.
 
 > **Microphone** requires a secure context. Access via `http://localhost:8001`, not an IP address over HTTP. For remote access, use HTTPS (self-signed cert with `openssl req -x509 ...`).
 
@@ -186,8 +200,8 @@ All VL traffic is proxied through the main server (`/vl/proxy/...`), so only one
 
 Students open `http://[your-ip]:8001/viewer` on the same network.
 
-- **Left** — AI chat (uses the instructor's API keys; students need no accounts)
-- **Right** — live transcription updated in real-time via SSE, including partial text and translations
+- **Left** — AI chat (uses the instructor's API keys; students need no accounts; viewers can also set their own API keys via the ⚙ settings panel, stored in `localStorage` only)
+- **Right** — live transcription updated in real-time via SSE, including partial text and translations; ⇄ Trans button toggles translation visibility; ⇩ export downloads TXT
 
 The instructor's page automatically pushes each new segment (with translation if enabled) to `web_server.py`, which relays them to all connected viewers. Session state is held in memory — restarting `web_server.py` clears it; viewers reconnect automatically.
 
@@ -238,6 +252,16 @@ curl -F "files=@audio.wav" "http://localhost:9002/transcribe?language=English&fo
 → {"type": "stop"}
 ← {"type": "partial", "text": "...", "language": "English"}
 ← {"type": "final",   "text": "...", "language": "English"}
+```
+
+### `GET /health`
+
+```json
+{
+  "status": "ready",
+  "limits": {"max_concurrent_decode": 4, "max_concurrent_infer": 1},
+  "memory": {"ram_total_mb": N, "ram_available_mb": N, "gpu_allocated_mb": N, "gpu_reserved_mb": N}
+}
 ```
 
 ### `GET /vl/health`

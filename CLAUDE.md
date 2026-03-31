@@ -21,7 +21,7 @@ Server loads models in the background; poll `GET /health` until `"status": "read
 | File | Purpose |
 |---|---|
 | `server.py` | FastAPI server — `/transcribe`, `/transcribe-streaming` (WebSocket), `/chat` (SSE), `/vl/health`, `/vl/proxy/{path}` |
-| `web_server.py` | Web UI server (port 8001) — serves `web/index.html`, `/api/chat`, `/api/translate`, `/api/extract-context` |
+| `web_server.py` | Web UI server (port 8001) — serves `web/index.html`, `/api/chat`, `/api/translate`, `/api/extract-context`, `/api/session/*`, `/api/models`, `/api/config` |
 | `web/index.html` | Instructor UI — sessions, AI chat (with image input), live mic transcription, auto-translation |
 | `web/viewer.html` | Viewer UI — live transcription + translations via SSE, AI chat |
 | `client_file.py` | **Primary client** — vocal extraction → resample → VAD → streaming ASR (outputs TXT format) |
@@ -34,27 +34,45 @@ Server loads models in the background; poll `GET /health` until `"status": "read
 
 Three-panel layout served from `web_server.py` at `http://localhost:8001`:
 
-- **Left**: Session list — auto-saved to `localStorage`, double-click to rename
+- **Left**: Session list — auto-saved to `localStorage`, double-click to rename, ✕ to delete
 - **Middle**: AI chat — Claude / Gemini / Mistral / Local VL; image attachment (🖼) visible only when `Local VL` selected; image thumbnails shown in history, clickable to enlarge (lightbox)
-- **Right**: Live mic transcription — VAD-based, language selector, **auto-translate** target selector (shown next to source language when VL available), PDF/MD context upload, export (↓)
+- **Right**: Live mic transcription — VAD-based, language selector, **auto-translate** target selector (shown next to source language when VL available), PDF/MD/TXT context upload (📎), export (⇩)
+
+**Panel divider**: Draggable 4px divider between chat and transcription panels; width saved to `localStorage`.
 
 **Auto-translation**: each new segment is auto-translated if target language ≠ source language and VL is available. Result stored in `entry.translated`, broadcast to viewers via `pushToServer()`. Manual `⇄ Translate` / `✕ Delete` buttons appear at bottom-right of each entry on hover.
 
-**Chat backend**: `POST /api/chat` on `web_server.py`. Server URL configurable via ⚙ settings button.
+**Chat backend**: `POST /api/chat` on `web_server.py`. Server URL configurable via ⚙ settings button (persisted to `localStorage` and `POST /api/config`).
 
 **Microphone**: requires a **secure context** — access via `http://localhost:8001`, not an IP over HTTP.
+
+**Audio source selector**: 🎙 Mic (echo/noise cancellation on) vs 🔊 Speaker (all processing off for line-in). Changes VAD thresholds: Mic uses `silenceTrigger=33`, `energyThreshold=0.018`; Speaker uses `silenceTrigger=40`, `energyThreshold=0.006`, `maxUttFrames=600` (~18 s force-flush).
 
 **Streaming**: WebSocket opened at VAD speech-start; partial results shown as the model decodes. Partials broadcast to viewers via `pushPartial`.
 
 **VL proxy**: all VL requests go through `GET|POST /vl/proxy/{path}` on the main server — no separate tunnel needed for `VL_PORT`.
 
+**Pop-out button** (⧉): opens `/viewer?popout=1` in a 400×620 px window — live transcription feed that can be pinned on top via OS window manager.
+
+**Mermaid rendering**: `scheduleRenderMermaid()` renders ` ```mermaid ``` ` fenced blocks. `normalizeMermaid()` (called inside `renderMd`) auto-wraps bare mermaid diagrams (lines starting with `graph TD/LR`, `flowchart`, `sequenceDiagram`, etc.) that VL models output as plain text.
+
 ## Viewer Page (`web/viewer.html`)
 
 Served at `http://localhost:8001/viewer`.
 
-- **Left**: AI chat (instructor's API keys — students need no keys)
-- **Right**: Live transcription via SSE — segments, partials, and translations all displayed; `entry.translated` patched into existing DOM entries when broadcast arrives after initial render
-- Export button downloads TXT; auto-reconnects on SSE drop
+- **Left**: AI chat (instructor's API keys — students need no keys; viewer stores its own keys in `localStorage` via ⚙ settings panel)
+- **Right**: Live transcription via SSE — segments, partials, and translations all displayed; `entry.translated` patched into existing DOM entries when broadcast arrives after initial render; ⇄ Trans toggle shows/hides translations
+- Export button (⇩) downloads TXT; auto-reconnects on SSE drop
+- When opened as pop-out (`?popout=1`), shows transcription panel only
+
+## Viewer Broadcast System
+
+Session state held in-memory in `web_server.py`:
+
+- `POST /api/session/push` — instructor page posts full session (name + segments + seq)
+- `POST /api/session/partial` — live partial text pushed per frame
+- `GET /api/session/stream` — SSE stream consumed by all viewer tabs; heartbeat every 20 s
+- Sequence numbers deduplicate updates; restarting `web_server.py` clears state; viewers reconnect automatically
 
 ## VL Model (`--qwenvl`)
 
@@ -134,6 +152,21 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 | `--asr-port` | `9002` | ASR server port |
 | `--port` | `8001` | Web server port |
 
+## Web Server API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Serve `web/index.html` (no-cache) |
+| `/viewer` | GET | Serve `web/viewer.html` (no-cache) |
+| `/api/chat` | POST | SSE chat stream — routes to Claude/Gemini/Mistral/local-vl |
+| `/api/translate` | POST | Translate a text segment via VL model |
+| `/api/extract-context` | POST | Parse PDF/MD/TXT; returns first 4000 chars |
+| `/api/models` | GET | List available models; `?all=true` includes disabled ones |
+| `/api/config` | POST | Save ASR host/port to persistent JSON |
+| `/api/session/push` | POST | Instructor pushes full session state to broadcast |
+| `/api/session/partial` | POST | Instructor pushes live partial text |
+| `/api/session/stream` | GET | SSE stream for viewers |
+
 ## Key Notes
 
 - **Audio format for streaming**: PCM 16-bit signed little-endian, 16kHz mono. Send `{"type":"start","format":"pcm_s16le","sample_rate_hz":16000}` before audio bytes, then `{"type":"stop"}`.
@@ -146,3 +179,5 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 - **VL subprocess env**: `VLLM_TARGET_DEVICE=cpu` (set for ASR CPU backend) is stripped before launching VL subprocess, so VL always runs on GPU.
 - **Translation history**: `entry.translated` stored in session alongside `entry.text`; persisted to `localStorage` and broadcast via SSE so viewers receive translations.
 - **HTML caching**: `web/index.html` and `web/viewer.html` served with `Cache-Control: no-cache` headers.
+- **Context stripping** (`strip_prompt()` in `server.py`): removes instruction prompts from ASR output when a vocabulary context is provided. Uses sentinel tags, instruction markers, exact-line matching, and prefix detection as cascading fallbacks.
+- **API keys**: server reads from env vars; clients can override per-request via `api_keys` field in `/api/chat`. Viewer stores its own keys in `localStorage` only.
