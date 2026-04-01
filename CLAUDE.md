@@ -46,7 +46,7 @@ Three-panel layout served from `web_server.py` at `http://localhost:8001`:
 
 **Microphone**: requires a **secure context** — access via `http://localhost:8001`, not an IP over HTTP.
 
-**Audio source selector**: 🎙 Mic (echo/noise cancellation on) vs 🔊 Speaker (all processing off for line-in). Changes VAD thresholds: Mic uses `silenceTrigger=33`, `energyThreshold=0.018`; Speaker uses `silenceTrigger=40`, `energyThreshold=0.006`, `maxUttFrames=600` (~18 s force-flush).
+**Audio source selector**: 🎙 Mic (echo/noise cancellation on) vs 🔊 Speaker (all processing off for line-in). Changes VAD thresholds: Mic uses `silenceTrigger=20`, `energyThreshold=0.018`, `maxUttFrames=400` (~12 s force-flush); Speaker uses `silenceTrigger=30`, `energyThreshold=0.006`, `maxUttFrames=400` (~12 s force-flush).
 
 **Streaming**: WebSocket opened at VAD speech-start; partial results shown as the model decodes. Partials broadcast to viewers via `pushPartial`.
 

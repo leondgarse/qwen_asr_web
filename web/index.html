@@ -882,8 +882,8 @@ const SPEECH_TRIGGER   = 5;         // consecutive speech frames to start
 
 // VAD params differ by source: speaker audio is lower-energy and more continuous
 const VAD_PROFILES = {
-  mic: { silenceTrigger: 33,  energyThreshold: 0.018, maxUttFrames: 2000 },  // ~1 s silence
-  spk: { silenceTrigger: 40,  energyThreshold: 0.006, maxUttFrames: 600  },  // ~1.2 s silence, force-flush ~18 s
+  mic: { silenceTrigger: 20,  energyThreshold: 0.018, maxUttFrames: 400  },  // ~0.6 s silence, force-flush ~12 s
+  spk: { silenceTrigger: 30,  energyThreshold: 0.006, maxUttFrames: 400  },  // ~0.9 s silence, force-flush ~12 s
 };
 function vadProfile() { return VAD_PROFILES[document.getElementById('audio-src-select').value] || VAD_PROFILES.mic; }
 function SILENCE_TRIGGER()  { return vadProfile().silenceTrigger; }
