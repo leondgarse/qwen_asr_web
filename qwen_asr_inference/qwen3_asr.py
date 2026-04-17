@@ -23,7 +23,12 @@ from .transformers_backend import (
     Qwen3ASRForConditionalGeneration,
     Qwen3ASRProcessor,
 )
+import transformers
 from transformers import AutoConfig, AutoModel, AutoProcessor
+
+# fix_mistral_regex kwarg causes a duplicate-argument error in transformers >= 5.2
+_transformers_ver = tuple(int(x) for x in transformers.__version__.split(".")[:2])
+_mistral_regex_kwarg = {} if _transformers_ver >= (5, 2) else {"fix_mistral_regex": True}
 
 AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
 AutoModel.register(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
@@ -210,7 +215,7 @@ class Qwen3ASRModel:
 
         model = AutoModel.from_pretrained(pretrained_model_name_or_path, **kwargs)
 
-        processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, fix_mistral_regex=True)
+        processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, **_mistral_regex_kwarg)
 
         forced_aligner_model = None
         if forced_aligner is not None:
@@ -269,7 +274,7 @@ class Qwen3ASRModel:
 
         llm = vLLM(model=model, **kwargs)
 
-        processor = Qwen3ASRProcessor.from_pretrained(model, fix_mistral_regex=True)
+        processor = Qwen3ASRProcessor.from_pretrained(model, **_mistral_regex_kwarg)
         sampling_params = SamplingParams(**({"temperature": 0.0, "max_tokens": max_new_tokens}))
 
         forced_aligner_model = None

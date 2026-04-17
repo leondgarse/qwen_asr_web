@@ -25,7 +25,11 @@ from .transformers_backend import (
     Qwen3ASRForConditionalGeneration,
     Qwen3ASRProcessor,
 )
+import transformers
 from transformers import AutoConfig, AutoModel, AutoProcessor
+
+_transformers_ver = tuple(int(x) for x in transformers.__version__.split(".")[:2])
+_mistral_regex_kwarg = {} if _transformers_ver >= (5, 2) else {"fix_mistral_regex": True}
 
 from .utils import (
     AudioLike,
@@ -371,7 +375,7 @@ class Qwen3ForcedAligner:
         if not isinstance(model, Qwen3ASRForConditionalGeneration):
             raise TypeError(f"AutoModel returned {type(model)}, expected Qwen3ASRForConditionalGeneration.")
 
-        processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, fix_mistral_regex=True)
+        processor = AutoProcessor.from_pretrained(pretrained_model_name_or_path, **_mistral_regex_kwarg)
         aligner_processor = Qwen3ForceAlignProcessor()
 
         return cls(model=model, processor=processor, aligner_processor=aligner_processor)

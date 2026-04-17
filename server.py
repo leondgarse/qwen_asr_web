@@ -156,9 +156,10 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 _ASR_ESTIMATED_GB = 5.7   # 3.87 GB weights + ~1.8 GB KV cache + overhead (max_model_len=2048, measured on 2080 Ti)
 _ASR_ESTIMATED_GB_4K = 6.0  # weights + ~2 GB KV cache (max_model_len=4096, large GPUs)
 _VL_ESTIMATED_GB = 6.7    # free GPU needed for VL: profiling peak ~6.17 GB + min KV cache 0.44 GB
+_VL_ESTIMATED_GB_4K = 8.0   # target for VL with 4K context: profiling peak ~6.17 GB + KV cache buffer
 _ALIGNER_GB = 1.5  # rough footprint of the 0.6B aligner
 _VL_BUFFER_GB = 0.5  # safety margin; util = (free - buffer) / total, vLLM requires util*total <= free
-_VL_MAX_GB = 20.0  # cap VL server memory so KV cache doesn't balloon on large GPUs
+_VL_MAX_GB = 20.0  # absolute cap for large VL models
 _GPU_MAX_UTIL = 0.75       # maximum utilization for small GPUs (leave room for others)
 _GPU_MAX_UTIL_SHARED = 0.70  # lower cap when ASR and VL share the same GPU; accounts for
                               # ~4 GB CUDA/NCCL overhead not counted in gpu_memory_utilization
@@ -174,23 +175,26 @@ def _asr_device_index() -> int:
     return 0
 
 
+_ASR_BUFFER_GB = 0.5  # safety margin so util*total <= free_at_startup
+
+
 def _auto_asr_gpu_util(with_vl: bool = False) -> float:
-    """Compute gpu_memory_utilization as a fraction of total GPU memory.
-    When VL shares the same GPU, cap ASR to leave headroom for VL."""
+    """Compute gpu_memory_utilization using actual free GPU memory at call time.
+    When VL shares the same GPU, leave headroom for VL."""
     if not torch.cuda.is_available():
         return 0.15
     dev = _asr_device_index()
     total_gb = torch.cuda.get_device_properties(dev).total_memory / 1024**3
+    free_bytes, _ = torch.cuda.mem_get_info(dev)
+    free_gb = free_bytes / 1024**3
     if with_vl and not VL_DEVICE:
-        # VL shares this GPU — give VL _VL_ESTIMATED_GB + _VL_BUFFER_GB; ASR gets the rest.
-        # Use _GPU_MAX_UTIL_SHARED (0.70) instead of _GPU_MAX_UTIL (0.75) to account for
-        # ~4 GB CUDA/NCCL process overhead that is not captured by gpu_memory_utilization.
-        asr_gb = max(total_gb - _VL_ESTIMATED_GB - _VL_BUFFER_GB, _ASR_ESTIMATED_GB)
-        util = round(min(asr_gb / total_gb, _GPU_MAX_UTIL_SHARED), 3)
+        # VL shares this GPU — reserve _VL_ESTIMATED_GB + _VL_BUFFER_GB for it.
+        target_gb = min(free_gb - _VL_ESTIMATED_GB - _VL_BUFFER_GB - _ASR_BUFFER_GB, _ASR_ESTIMATED_GB_4K)
     else:
-        asr_gb = _ASR_ESTIMATED_GB_4K if total_gb >= 16 else _ASR_ESTIMATED_GB
-        util = round(min(asr_gb / total_gb, _GPU_MAX_UTIL), 3)
-    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {asr_gb:.1f} GB / {total_gb:.1f} GB total, with_vl={with_vl}, vl_device='{VL_DEVICE}')")
+        target_gb = min(free_gb - _ASR_BUFFER_GB, _ASR_ESTIMATED_GB_4K)
+    asr_gb = max(target_gb, _ASR_ESTIMATED_GB)
+    util = round(min(asr_gb / total_gb, _GPU_MAX_UTIL), 3)
+    logger.info(f"Auto ASR gpu_memory_utilization={util:.3f} (target {asr_gb:.1f} GB / {free_gb:.1f} GB free / {total_gb:.1f} GB total, with_vl={with_vl}, vl_device='{VL_DEVICE}')")
     return util
 
 
@@ -229,12 +233,12 @@ def _auto_vl_gpu_util() -> float:
             f"{free_gb:.1f} GB free, need at least {_VL_ESTIMATED_GB + _VL_BUFFER_GB:.1f} GB. "
             f"Use --vl-device to select a different GPU."
         )
-    usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_MAX_GB)
+    usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_ESTIMATED_GB_4K)
     # vLLM requires gpu_memory_utilization * total <= free_at_startup.
     # util = usable / total satisfies this since usable = free - buffer < free.
     # available_kv = total * util - peak_memory, so buffer must be small enough
     # that util >= (peak + min_kv) / total.
-    util = round(min(usable_gb / total_gb, 0.90), 3)
+    util = round(min(usable_gb / total_gb, _GPU_MAX_UTIL), 3)
     logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total, device={dev})")
     return util
 
