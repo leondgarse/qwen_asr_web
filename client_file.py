@@ -20,7 +20,7 @@ from tqdm import tqdm
 SAMPLING_RATE = 16000
 CHANNELS = 1
 MIN_SEGMENT_DURATION_S = 1.5  # skip VAD segments shorter than this (slide transitions, applause pops)
-MAX_SEGMENT_DURATION_S = 120.0  # force-split segments longer than this at the lowest-energy point
+MAX_SEGMENT_DURATION_S = 30.0  # force-split segments longer than this at the lowest-energy point
 CONTAMINATION_WINDOW = 6  # consecutive words that must appear verbatim in context to flag contamination
 
 
@@ -106,6 +106,71 @@ def resample_to_16k(audio_int16: np.ndarray, src_sr: int) -> np.ndarray:
     down = src_sr // g
     resampled = resample_poly(audio_int16.astype(np.float64), up, down)
     return np.clip(resampled, -32768, 32767).astype(np.int16)
+
+
+def collapse_repetitions(text: str, min_ngram: int = 2, max_ngram: int = 8) -> str:
+    """
+    Detect and collapse ASR hallucination loops — e.g. "ski skills, ski skills, ski skills…"
+    For each n-gram size (from largest to smallest), find runs of the same n-gram repeated
+    3+ times consecutively and reduce them to a single occurrence.
+    Returns the cleaned text, or an empty string if the result is mostly repetition (>60% removed).
+    """
+    words = text.split()
+    if len(words) < min_ngram * 3:
+        return text
+
+    changed = True
+    while changed:
+        changed = False
+        for n in range(max_ngram, min_ngram - 1, -1):
+            i = 0
+            new_words = []
+            while i < len(words):
+                # Check whether the n-gram starting at i repeats at i+n, i+2n, ...
+                ngram = words[i : i + n]
+                if len(ngram) < n:
+                    new_words.extend(words[i:])
+                    i = len(words)
+                    break
+                repeat_count = 1
+                j = i + n
+                while words[j : j + n] == ngram:
+                    repeat_count += 1
+                    j += n
+                if repeat_count >= 3:
+                    new_words.extend(ngram)  # keep one copy
+                    i = j
+                    changed = True
+                else:
+                    new_words.append(words[i])
+                    i += 1
+            words = new_words
+
+    result = " ".join(words)
+    # If we stripped more than 60% of the original words, the segment was mostly hallucination
+    if len(words) < len(text.split()) * 0.4:
+        return result  # still return what's left — caller can decide
+    return result
+
+
+def is_near_duplicate(text: str, prev: str, threshold: float = 0.7) -> bool:
+    """
+    Returns True if text is a near-duplicate of prev — same segment re-sent by the server.
+    Uses word-level Jaccard similarity on bigrams so minor wording differences still match.
+    """
+    if not prev or not text:
+        return False
+
+    def bigrams(s):
+        w = s.lower().split()
+        return set(zip(w, w[1:])) if len(w) > 1 else set()
+
+    a, b = bigrams(text), bigrams(prev)
+    if not a and not b:
+        return text.lower().strip() == prev.lower().strip()
+    if not a or not b:
+        return False
+    return len(a & b) / len(a | b) >= threshold
 
 
 def is_context_contamination(text: str, context: str) -> bool:
@@ -350,6 +415,7 @@ async def process_file(
             pass  # truncate
 
         pbar = tqdm(total=len(segments), desc="Transcribing")
+        last_text = ""
 
         for start_idx, end_idx in segments:
             segment_duration = (end_idx - start_idx) / SAMPLING_RATE
@@ -388,10 +454,16 @@ async def process_file(
                             pass
                         elif is_context_contamination(text, context):
                             tqdm.write(f"Skipping {sub_timestamp_str} (context contamination detected)")
+                        elif is_near_duplicate(text, last_text):
+                            tqdm.write(f"Skipping {sub_timestamp_str} (near-duplicate of previous segment)")
                         else:
+                            cleaned = collapse_repetitions(text)
+                            if cleaned != text:
+                                tqdm.write(f"Collapsed repetitions in {sub_timestamp_str}")
                             ts_str = str((sub_start_time + offset)).split(".")[0]
                             with open(txt_output_file, "a", encoding="utf-8") as f:
-                                f.write(f"[{ts_str}] {text}\n")
+                                f.write(f"[{ts_str}] {cleaned}\n")
+                            last_text = cleaned
 
                 except Exception as e:
                     tqdm.write(f"Failed to process segment {sub_timestamp_str}: {e}")

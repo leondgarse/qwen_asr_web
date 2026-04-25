@@ -1090,6 +1090,7 @@ async function sendChatMessage() {
   const s=getSession(); if(!s) return;
   const inp=document.getElementById('chat-input');
   const text=inp.value.trim(); if(!text) return;
+  cancelAutoAnswer(); // user is replying manually — cancel any pending auto-answer
 
   const userMsg = {role:'user', content:text, time:fmtTime()};
   if (attachedImage) { userMsg.image = attachedImage; userMsg.image_mime = attachedImageMime; }
@@ -1297,6 +1298,13 @@ function appendTranscription(text) {
   scrollBottomIfPinned(out);
   renderSessions();
   autoTranslateEntry(el, entry);
+  if (isQuestion(entry.text)) {
+    scheduleAutoAnswer(entry.text);
+  } else if (_autoAnswerTimer) {
+    // A non-question segment arrived while we were waiting — assume the
+    // speaker (or someone else) is answering it, so don't auto-respond.
+    cancelAutoAnswer();
+  }
 }
 function setPartial(text) {
   const el=document.getElementById('partial-entry');
@@ -1304,6 +1312,79 @@ function setPartial(text) {
   if (text) { txt.textContent=text; el.style.display='block'; scrollBottomIfPinned(document.getElementById('tr-output')); }
   else       { el.style.display='none'; txt.textContent=''; }
   pushPartial(text);
+}
+
+// ── Auto-answer: trigger chat when a question is transcribed ──
+let _autoAnswerTimer = null;
+let _pendingQuestion = '';
+const AUTO_ANSWER_DELAY_MS = 10000; // 10 s
+
+function isQuestion(text) {
+  // Trigger only when the segment *ends* with '?'. A '?' followed by more
+  // text in the same segment usually means the speaker already self-answered
+  // (e.g. "How much do you remember? Not much."), so we skip those.
+  return /\?["'”’)\s]*$/.test(text || '');
+}
+
+function cancelAutoAnswer() {
+  if (_autoAnswerTimer) { clearTimeout(_autoAnswerTimer); _autoAnswerTimer = null; }
+  _pendingQuestion = '';
+}
+
+function scheduleAutoAnswer(question) {
+  if (_autoAnswerTimer) clearTimeout(_autoAnswerTimer);
+  _pendingQuestion = question;
+  _autoAnswerTimer = setTimeout(async () => {
+    _autoAnswerTimer = null;
+    const q = _pendingQuestion; _pendingQuestion = '';
+    if (!q) return;
+    const s = getSession(); if (!s) return;
+    // Build a concise prompt so the AI focuses on the spoken question
+    const prompt = `Answer this question from the transcription: "${q}"`;
+    const userMsg = {role: 'user', content: prompt, time: fmtTime()};
+    s.messages.push(userMsg);
+    saveState(); renderChat();
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true;
+    const asstMsg = {role: 'assistant', content: '', time: fmtTime()};
+    s.messages.push(asstMsg);
+    renderChat();
+    try {
+      const selectedModel = document.getElementById('model-select').value;
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          messages: s.messages.slice(0, -1).map(m => ({role: m.role, content: m.content})),
+          transcription: getTranscriptionText(),
+          context: contextText,
+          model: selectedModel,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({detail: resp.statusText}));
+        asstMsg.content = `⚠ ${err.detail || resp.statusText}`;
+        saveState(); renderChat(); return;
+      }
+      const reader = resp.body.getReader(), dec = new TextDecoder();
+      const box = document.getElementById('messages');
+      while (true) {
+        const {done, value} = await reader.read(); if (done) break;
+        for (const line of dec.decode(value).split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6); if (payload === '[DONE]') break;
+          try { const d = JSON.parse(payload); if (d.text) asstMsg.content += d.text; } catch {}
+        }
+        renderChat(); scrollBottom(box);
+      }
+    } catch (e) {
+      asstMsg.content = `⚠ Auto-answer error: ${e.message}`;
+      renderChat();
+    } finally {
+      saveState(); btn.disabled = false;
+      scheduleRenderMermaid(document.getElementById('messages'));
+    }
+  }, AUTO_ANSWER_DELAY_MS);
 }
 
 let _partialTimer = null;

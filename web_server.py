@@ -335,7 +335,16 @@ async def chat(req: ChatReq):
         "Mermaid diagram in a ```mermaid code block if it would help clarify the content."
     ]
     if req.transcription:
-        system_parts.append(f"Current transcription:\n{req.transcription}")
+        # Keep the most recent content by truncating from the front, not the end,
+        # so queries like "what was recently discussed" always reference the latest segments.
+        _MAX_TRANSCRIPTION_CHARS = 12000
+        tr = req.transcription
+        if len(tr) > _MAX_TRANSCRIPTION_CHARS:
+            # Find the first newline after the cut point so we don't split mid-line
+            cut = len(tr) - _MAX_TRANSCRIPTION_CHARS
+            newline_pos = tr.find('\n', cut)
+            tr = "[…earlier content omitted…]\n" + tr[newline_pos + 1 if newline_pos != -1 else cut:]
+        system_parts.append(f"Current transcription:\n{tr}")
     if req.context:
         system_parts.append(f"Reference context document:\n{req.context}")
     system_text = "\n\n".join(system_parts)
