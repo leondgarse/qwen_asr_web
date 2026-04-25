@@ -233,7 +233,7 @@ def _auto_vl_gpu_util() -> float:
             f"{free_gb:.1f} GB free, need at least {_VL_ESTIMATED_GB + _VL_BUFFER_GB:.1f} GB. "
             f"Use --vl-device to select a different GPU."
         )
-    usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_ESTIMATED_GB_4K)
+    usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_MAX_GB)
     # vLLM requires gpu_memory_utilization * total <= free_at_startup.
     # util = usable / total satisfies this since usable = free - buffer < free.
     # available_kv = total * util - peak_memory, so buffer must be small enough
