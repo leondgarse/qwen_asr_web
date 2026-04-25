@@ -233,14 +233,21 @@ def _auto_vl_gpu_util() -> float:
             f"{free_gb:.1f} GB free, need at least {_VL_ESTIMATED_GB + _VL_BUFFER_GB:.1f} GB. "
             f"Use --vl-device to select a different GPU."
         )
-    usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), _VL_MAX_GB)
-    # vLLM requires gpu_memory_utilization * total <= free_at_startup.
-    # util = usable / total satisfies this since usable = free - buffer < free.
-    # available_kv = total * util - peak_memory, so buffer must be small enough
-    # that util >= (peak + min_kv) / total.
+    # When VL shares the same GPU as ASR, the VL subprocess sees ~14 GB less free
+    # memory than the main process (CUDA context + NCCL init in the new process).
+    # Use a conservative cap so util*total fits inside subprocess free memory.
+    # On a dedicated VL GPU, use _VL_MAX_GB (20 GB) for a larger KV cache.
+    sharing_gpu = not bool(VL_DEVICE)
+    usable_cap = _VL_ESTIMATED_GB_4K if sharing_gpu else _VL_MAX_GB
+    usable_gb = min(max(0.0, free_gb - _VL_BUFFER_GB), usable_cap)
     util = round(min(usable_gb / total_gb, _GPU_MAX_UTIL), 3)
-    logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total, device={dev})")
+    logger.info(f"Auto VL gpu_memory_utilization={util:.3f} ({usable_gb:.1f} GB usable / {free_gb:.1f} GB free / {total_gb:.1f} GB total, device={dev}, sharing={sharing_gpu})")
     return util
+
+
+# Approximate CUDA context + NCCL init overhead in the VL subprocess when sharing
+# GPU with ASR; the subprocess sees this many GB less free than the main process.
+_VL_SUBPROCESS_OVERHEAD_GB = 14.0
 
 
 def _auto_vl_max_model_len() -> int:
@@ -250,6 +257,9 @@ def _auto_vl_max_model_len() -> int:
     dev = _vl_device_index()
     free_bytes, _ = torch.cuda.mem_get_info(dev)
     free_gb = free_bytes / 1024**3
+    # When sharing with ASR, the VL subprocess sees much less free memory.
+    if not VL_DEVICE:
+        free_gb = max(0.0, free_gb - _VL_SUBPROCESS_OVERHEAD_GB)
     if free_gb >= 20:
         return 16384
     elif free_gb >= 12:

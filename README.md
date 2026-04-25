@@ -24,9 +24,9 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 
 | Model | Size | Purpose |
 |---|---|---|
-| `Qwen3-ASR-1.7B` | ~3.5 GB | Speech recognition |
+| `Qwen3-ASR-1.7B` | ~4 GB | Speech recognition |
 | `Qwen3-ForcedAligner-0.6B` | ~1.2 GB | Word-level timestamps |
-| `Qwen3-VL-2B-Instruct` *(optional)* | ~5 GB | Vision-language chat + translation |
+| `Qwen3-VL-2B-Instruct` *(optional)* | ~4.5 GB | Vision-language chat + translation |
 
 ASR and aligner are loaded from local directories at startup. ASR inference is handled by [`qwen_asr_inference`](https://github.com/QwenLM/Qwen3-ASR). The VL model runs as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 9004).
 
@@ -51,6 +51,14 @@ CUDA_VISIBLE_DEVICES=0,1 python server.py --asr-device 0 --qwenvl --vl-device 1 
 
 Poll `GET /health` until `"status": "ready"` before sending requests.
 
+**GPU requirements:**
+
+| Config | GPU needed |
+|---|---|
+| ASR only | ~6 GB (3.87 GB model + 1.4 GB KV) |
+| ASR + VL, same GPU | ~20 GB free at startup; VL context limited to 2048 tokens |
+| ASR + VL, separate GPUs (`--vl-device`) | ~10 GB each; VL context 4096 tokens — tested on 2× 11 GB |
+
 **Key env vars:**
 
 | Variable | Default | Description |
@@ -58,8 +66,8 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 | `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | Local path or HF model ID |
 | `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
 | `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~6 GB |
-| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL model; auto uses free GPU after ASR + aligner (capped at 20 GB) |
-| `VL_MAX_MODEL_LEN` | auto | VL context length; auto-sized from free GPU (max 16384) |
+| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; 8 GB cap when sharing GPU with ASR, 20 GB cap on dedicated GPU |
+| `VL_MAX_MODEL_LEN` | auto | VL context length; 2048 when sharing GPU with ASR, 4096 on dedicated GPU ≥10 GB |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |
 | `ASR_PORT` | `9002` | Default port; overridden by `--port` CLI arg |
 | `ASR_DEVICE` | `""` | GPU index for ASR model (overridden by `--asr-device`) |

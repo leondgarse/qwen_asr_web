@@ -78,8 +78,10 @@ Session state held in-memory in `web_server.py`:
 
 Started as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 9004).
 
-- GPU memory auto-sized from actual free GPU at startup, capped at `_VL_MAX_GB = 20 GB`
-- `max_model_len` auto-sized from free GPU (16384 if ≥20 GB free, else 8192/4096/2048)
+- GPU memory auto-sized from actual free GPU at startup:
+  - **Shared GPU** (no `--vl-device`): capped at `_VL_ESTIMATED_GB_4K = 8 GB` → leaves ~1.7 GB KV cache → `max_model_len = 2048`
+  - **Dedicated GPU** (`--vl-device`): capped at `_VL_MAX_GB = 20 GB` → leaves ~2.6 GB KV cache → `max_model_len = 4096` on ≥10 GB GPU
+- Minimum GPU free memory at startup: ~20 GB on a single shared GPU; ~10 GB each on separate GPUs (tested on 2× 11 GB)
 - Subprocess env strips ASR CPU vars (`VLLM_TARGET_DEVICE=cpu`, etc.) so VL runs on GPU
 - Accessed via `/vl/proxy/...` on main server — `web_server.py` never connects to `VL_PORT` directly
 
@@ -133,8 +135,8 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 | `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | local dir or HF model id |
 | `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
 | `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR; auto targets ~6 GB |
-| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; auto = free GPU − 2 GB buffer, capped at 20 GB |
-| `VL_MAX_MODEL_LEN` | auto | VL context length; auto from free GPU, max 16384 |
+| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; 8 GB cap on shared GPU, 20 GB cap on dedicated GPU |
+| `VL_MAX_MODEL_LEN` | auto | VL context length; 2048 on shared GPU, 4096 on dedicated GPU ≥10 GB |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |
 | `ASR_DEVICE` | `""` | GPU index for ASR model (overridden by `--asr-device`) |
 | `VL_DEVICE` | `""` | GPU index for VL subprocess (overridden by `--vl-device`); empty = share GPU with ASR |
