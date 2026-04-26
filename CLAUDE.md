@@ -42,6 +42,8 @@ Three-panel layout served from `web_server.py` at `http://localhost:8001`:
 
 **Auto-translation**: each new segment is auto-translated if target language ≠ source language and VL is available. Result stored in `entry.translated`, broadcast to viewers via `pushToServer()`. Manual `⇄ Translate` / `✕ Delete` buttons appear at bottom-right of each entry on hover.
 
+**Auto-answer + manual Ask-AI**: when a transcription segment ends with `?` (matched by `isQuestion()` — trailing `?` only, so self-answered segments like *"How much do you remember? Not much."* are skipped), `scheduleAutoAnswer()` arms a 10 s timer. The timer is cancelled if (a) a new VAD utterance starts at the mic level (`processVADFrame` → `cancelAutoAnswer()`), (b) the next final segment isn't itself a question, or (c) the user manually sends a chat message. On fire, it calls `askAIAboutSegment(-1, null, questionText)` which streams a response into the chat. Every segment also shows a **💬 Answer** button (questions) or **💬 Explain** button (statements) on hover; clicking routes through the same `askAIAboutSegment(idx, btn)` and bypasses the 10 s wait. Silence is measured from the mic VAD, not from ASR `final` arrivals, so ASR decoding lag does not eat into the 10 s window.
+
 **Chat backend**: `POST /api/chat` on `web_server.py`. Server URL configurable via ⚙ settings button (persisted to `localStorage` and `POST /api/config`).
 
 **Microphone**: requires a **secure context** — access via `http://localhost:8001`, not an IP over HTTP.

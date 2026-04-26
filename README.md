@@ -19,6 +19,7 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 - **Pop-out window** — ⧉ button opens a floating transcription-only viewer that can be pinned on top via the OS window manager
 - **Mermaid diagrams** — AI responses with diagram syntax are rendered as SVG (both fenced blocks and bare VL output)
 - **Qwen-VL** — optional vision-language model (`--qwenvl`) for image-aware chat and per-segment auto-translation
+- **Auto-answer + Ask-AI button** — questions ending in `?` auto-trigger a chat answer after ~10 s of mic silence; every segment also has a **💬 Answer** / **💬 Explain** button to query the AI on demand
 
 ## Models
 
@@ -185,6 +186,8 @@ The left/right panel boundary is a draggable divider; width is saved to `localSt
 **Audio source**: toggle between 🎙 Mic (echo/noise cancellation on) and 🔊 Speaker/Line-in (all processing off). Speaker mode uses a shorter max-utterance window (~18 s force-flush) suited for recording desktop audio.
 
 **Auto-translation**: when a target language different from the source is selected, each new transcription segment is automatically translated after it arrives. The `⇄ Translate` / `✕ Delete` buttons appear at the bottom-right of each entry on hover. Translations are broadcast to viewers.
+
+**Auto-answer + Ask-AI**: when a transcription segment ends with a question mark (`?`), a 10-second silence timer starts. If no new speech is detected at the mic during that window, the AI auto-answers the question in the chat panel. The timer is cancelled the moment the speaker resumes talking — silence is measured at the microphone (VAD), not after ASR finishes decoding, so it stays accurate even with ASR lag. Every segment also exposes a **💬 Answer** button (for questions) or **💬 Explain** button (for statements) on hover; clicking it asks the AI immediately and bypasses the 10 s wait.
 
 **Image chat**: select `Local VL` in the model dropdown, attach an image (🖼), and ask a question. The image thumbnail is shown in the chat history and can be clicked to enlarge.
 
