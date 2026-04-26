@@ -639,7 +639,7 @@ body::after {
   box-shadow: 0 0 0 2px var(--accent);
   white-space: pre-wrap;
 }
-.tr-translate {
+.tr-translate, .tr-ask {
   background: none; border: none;
   color: var(--muted); cursor: pointer;
   font-size: 11px; padding: 2px 6px;
@@ -647,7 +647,8 @@ body::after {
   font-family: 'Outfit', sans-serif;
   transition: background .12s, color .12s;
 }
-.tr-translate:hover { color: var(--text); background: var(--bg4); }
+.tr-translate:hover, .tr-ask:hover { color: var(--text); background: var(--bg4); }
+.tr-ask:disabled { opacity: 0.5; cursor: default; }
 .tr-translated {
   font-size: 12.5px; color: var(--muted);
   font-style: italic;
@@ -1172,9 +1173,12 @@ function renderTranscriptionPanel() {
 function makeTrEntry(entry, idx) {
   const div=document.createElement('div');
   div.className='tr-entry';
+  const askLabel = isQuestion(entry.text) ? '💬 Answer' : '💬 Explain';
+  const askTitle = isQuestion(entry.text) ? 'Answer this question with AI' : 'Explain this with AI';
   div.innerHTML=`<div class="tr-body"><div class="tr-ts">${esc(entry.time)}</div><div class="tr-txt">${esc(entry.text)}</div>`
     +(entry.translated ? `<div class="tr-translated">${esc(entry.translated)}</div>` : '')
     +`<div class="tr-actions">`
+    +`<button class="tr-ask" onclick="askAIAboutSegment(${idx},this)" title="${askTitle}">${askLabel}</button>`
     +(vlAvailable ? `<button class="tr-translate" onclick="translateSegment(this,${idx})" title="Translate">⇄ Translate</button>` : '')
     +`<button class="tr-edit" onclick="editSegment(${idx})" title="Edit">✎ Edit</button>`
     +`<button class="tr-del" onclick="deleteSegment(${idx})" title="Delete">✕ Delete</button>`
@@ -1332,59 +1336,72 @@ function cancelAutoAnswer() {
 }
 
 function scheduleAutoAnswer(question) {
+  // If mic is already picking up the next utterance, the speaker has moved on
+  // (ASR decoding lag means `final` can arrive after speech already resumed).
+  if (isSpeaking) return;
   if (_autoAnswerTimer) clearTimeout(_autoAnswerTimer);
   _pendingQuestion = question;
-  _autoAnswerTimer = setTimeout(async () => {
+  _autoAnswerTimer = setTimeout(() => {
     _autoAnswerTimer = null;
     const q = _pendingQuestion; _pendingQuestion = '';
     if (!q) return;
-    const s = getSession(); if (!s) return;
-    // Build a concise prompt so the AI focuses on the spoken question
-    const prompt = `Answer this question from the transcription: "${q}"`;
-    const userMsg = {role: 'user', content: prompt, time: fmtTime()};
-    s.messages.push(userMsg);
-    saveState(); renderChat();
-    const btn = document.getElementById('send-btn');
-    btn.disabled = true;
-    const asstMsg = {role: 'assistant', content: '', time: fmtTime()};
-    s.messages.push(asstMsg);
-    renderChat();
-    try {
-      const selectedModel = document.getElementById('model-select').value;
-      const resp = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          messages: s.messages.slice(0, -1).map(m => ({role: m.role, content: m.content})),
-          transcription: getTranscriptionText(),
-          context: contextText,
-          model: selectedModel,
-        }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({detail: resp.statusText}));
-        asstMsg.content = `⚠ ${err.detail || resp.statusText}`;
-        saveState(); renderChat(); return;
-      }
-      const reader = resp.body.getReader(), dec = new TextDecoder();
-      const box = document.getElementById('messages');
-      while (true) {
-        const {done, value} = await reader.read(); if (done) break;
-        for (const line of dec.decode(value).split('\n')) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6); if (payload === '[DONE]') break;
-          try { const d = JSON.parse(payload); if (d.text) asstMsg.content += d.text; } catch {}
-        }
-        renderChat(); scrollBottom(box);
-      }
-    } catch (e) {
-      asstMsg.content = `⚠ Auto-answer error: ${e.message}`;
-      renderChat();
-    } finally {
-      saveState(); btn.disabled = false;
-      scheduleRenderMermaid(document.getElementById('messages'));
-    }
+    // Reuse the manual-trigger path (idx -1 means "use the literal text I pass")
+    askAIAboutSegment(-1, null, q);
   }, AUTO_ANSWER_DELAY_MS);
+}
+
+async function askAIAboutSegment(idx, btn, overrideText) {
+  const s = getSession(); if (!s) return;
+  const seg = overrideText || (s.transcription[idx] && s.transcription[idx].text);
+  if (!seg) return;
+  const prompt = isQuestion(seg)
+    ? `Answer this question from the transcription: "${seg}"`
+    : `Explain this based on the transcription: "${seg}"`;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const userMsg = {role: 'user', content: prompt, time: fmtTime()};
+  s.messages.push(userMsg);
+  saveState(); renderChat();
+  const sendBtn = document.getElementById('send-btn');
+  sendBtn.disabled = true;
+  const asstMsg = {role: 'assistant', content: '', time: fmtTime()};
+  s.messages.push(asstMsg);
+  renderChat();
+  try {
+    const selectedModel = document.getElementById('model-select').value;
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        messages: s.messages.slice(0, -1).map(m => ({role: m.role, content: m.content})),
+        transcription: getTranscriptionText(),
+        context: contextText,
+        model: selectedModel,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({detail: resp.statusText}));
+      asstMsg.content = `⚠ ${err.detail || resp.statusText}`;
+      saveState(); renderChat(); return;
+    }
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    const box = document.getElementById('messages');
+    while (true) {
+      const {done, value} = await reader.read(); if (done) break;
+      for (const line of dec.decode(value).split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6); if (payload === '[DONE]') break;
+        try { const d = JSON.parse(payload); if (d.text) asstMsg.content += d.text; } catch {}
+      }
+      renderChat(); scrollBottom(box);
+    }
+  } catch (e) {
+    asstMsg.content = `⚠ Ask-AI error: ${e.message}`;
+    renderChat();
+  } finally {
+    saveState(); sendBtn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = isQuestion(seg) ? '💬 Answer' : '💬 Explain'; }
+    scheduleRenderMermaid(document.getElementById('messages'));
+  }
 }
 
 let _partialTimer = null;
@@ -1497,6 +1514,9 @@ function processVADFrame(frame) {
         isSpeaking = true; speechCount = 0; silenceCount = 0; uttFrameCount = 0;
         currentUtt = startStreamingUtterance();
         setRecStatus('Speaking…');
+        // Real silence is measured from the mic, not from when ASR finalizes.
+        // Any new utterance means the speaker is still going — cancel pending answer.
+        if (_autoAnswerTimer) cancelAutoAnswer();
       }
     } else { speechCount = 0; setRecStatus('Listening…'); }
   } else {
