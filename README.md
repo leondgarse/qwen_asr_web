@@ -56,7 +56,7 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 
 | Config | GPU needed |
 |---|---|
-| ASR only | ~6 GB (3.87 GB model + 1.4 GB KV) |
+| ASR only | ~8 GB (3.87 GB weights + ~2 GB encoder profiling + ~2 GB KV cache at `max_model_len=4096`) |
 | ASR + VL, same GPU | ~20 GB free at startup; VL context limited to 2048 tokens |
 | ASR + VL, separate GPUs (`--vl-device`) | ~10 GB each; VL context 4096 tokens — tested on 2× 11 GB |
 
@@ -66,7 +66,7 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 |---|---|---|
 | `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | Local path or HF model ID |
 | `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
-| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~6 GB |
+| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~8 GB (3.87 GB weights + ~2 GB encoder profiling + ~2 GB KV cache at `max_model_len=4096`) |
 | `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; 8 GB cap when sharing GPU with ASR, 20 GB cap on dedicated GPU |
 | `VL_MAX_MODEL_LEN` | auto | VL context length; 2048 when sharing GPU with ASR, 4096 on dedicated GPU ≥10 GB |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |

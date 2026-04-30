@@ -136,7 +136,7 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 |---|---|---|
 | `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | local dir or HF model id |
 | `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
-| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR; auto targets ~6 GB |
+| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR; auto targets ~8 GB (3.87 GB weights + ~2 GB encoder profiling + ~2 GB KV cache at `max_model_len=4096`) |
 | `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; 8 GB cap on shared GPU, 20 GB cap on dedicated GPU |
 | `VL_MAX_MODEL_LEN` | auto | VL context length; 2048 on shared GPU, 4096 on dedicated GPU ≥10 GB |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |

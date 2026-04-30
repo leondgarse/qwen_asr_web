@@ -154,7 +154,7 @@ def read_audio_file(file_bytes: bytes, filename: str = "") -> Tuple[np.ndarray, 
 # Estimated GB needed for each component (model weights + KV cache)
 # Updated based on actual measurement: Qwen3-ASR-1.7B weights ~3.87 GB + KV cache buffer
 _ASR_ESTIMATED_GB = 5.7   # 3.87 GB weights + ~1.8 GB KV cache + overhead (max_model_len=2048, measured on 2080 Ti)
-_ASR_ESTIMATED_GB_4K = 6.0  # weights + ~2 GB KV cache (max_model_len=4096, large GPUs)
+_ASR_ESTIMATED_GB_4K = 8.0  # 3.87 GB weights + encoder profiling (10 audio items @ 4096 tok) + KV cache (max_model_len=4096)
 _VL_ESTIMATED_GB = 6.7    # free GPU needed for VL: profiling peak ~6.17 GB + min KV cache 0.44 GB
 _VL_ESTIMATED_GB_4K = 8.0   # target for VL with 4K context: profiling peak ~6.17 GB + KV cache buffer
 _ALIGNER_GB = 1.5  # rough footprint of the 0.6B aligner
