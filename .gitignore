@@ -34,3 +34,9 @@ data/
 
 # macOS
 .DS_Store
+
+# Runtime config written by web_server.py (/api/config)
+asr_config.json
+
+# yt-dlp cache for URL inputs
+downloads/

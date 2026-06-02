@@ -24,6 +24,86 @@ MAX_SEGMENT_DURATION_S = 30.0  # force-split segments longer than this at the lo
 CONTAMINATION_WINDOW = 6  # consecutive words that must appear verbatim in context to flag contamination
 
 
+def is_url(s: str) -> bool:
+    return s.startswith(("http://", "https://"))
+
+
+def detect_browser_for_cookies() -> str | None:
+    """Pick the first browser likely to have a Bilibili session, by checking common profile dirs."""
+    home = os.path.expanduser("~")
+    candidates = [
+        ("firefox", os.path.join(home, ".mozilla", "firefox")),
+        ("chrome", os.path.join(home, ".config", "google-chrome")),
+        ("chromium", os.path.join(home, ".config", "chromium")),
+        ("edge", os.path.join(home, ".config", "microsoft-edge")),
+        ("brave", os.path.join(home, ".config", "BraveSoftware", "Brave-Browser")),
+        # macOS paths
+        ("firefox", os.path.join(home, "Library", "Application Support", "Firefox")),
+        ("chrome", os.path.join(home, "Library", "Application Support", "Google", "Chrome")),
+    ]
+    for name, path in candidates:
+        if os.path.isdir(path):
+            return name
+    return None
+
+
+def download_url(url: str, output_dir: str = "downloads", cookies_from_browser: str | None = None) -> str:
+    """
+    Download a video/audio URL via yt-dlp (works for Bilibili, YouTube, etc.).
+    Returns the path to the downloaded media file. Reuses an existing download if the
+    output template already produced a file for this URL.
+    """
+    if shutil.which("yt-dlp") is None:
+        raise RuntimeError("yt-dlp is not installed. Install with: pip install yt-dlp")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Use the video id as the stem so we can detect cached downloads
+    id_proc = subprocess.run(
+        ["yt-dlp", "--get-id", "--no-warnings", url],
+        capture_output=True,
+        text=True,
+    )
+    if id_proc.returncode != 0 or not id_proc.stdout.strip():
+        raise RuntimeError(f"yt-dlp could not resolve URL: {id_proc.stderr.strip() or url}")
+    video_id = id_proc.stdout.strip().splitlines()[-1]
+
+    # Look for an existing file with that id
+    for fname in os.listdir(output_dir):
+        if fname.startswith(video_id + ".") and not fname.endswith(".part"):
+            cached = os.path.join(output_dir, fname)
+            print(f"Reusing cached download: {cached}")
+            return cached
+
+    output_template = os.path.join(output_dir, "%(id)s.%(ext)s")
+    cmd = [
+        "yt-dlp",
+        "-f", "bestaudio/best",
+        "--no-playlist",
+        "-o", output_template,
+        url,
+    ]
+    if cookies_from_browser is None:
+        cookies_from_browser = detect_browser_for_cookies()
+    if cookies_from_browser:
+        print(f"Using cookies from {cookies_from_browser}")
+        cmd[1:1] = ["--cookies-from-browser", cookies_from_browser]
+
+    print(f"Downloading via yt-dlp: {url}")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"yt-dlp failed:\n{proc.stderr}")
+
+    # Locate the produced file (extension chosen by yt-dlp)
+    for fname in os.listdir(output_dir):
+        if fname.startswith(video_id + ".") and not fname.endswith(".part"):
+            downloaded = os.path.join(output_dir, fname)
+            print(f"Downloaded: {downloaded}")
+            return downloaded
+
+    raise FileNotFoundError(f"yt-dlp succeeded but no output file found for id={video_id} in {output_dir}")
+
+
 def extract_context(file_path: str, max_chars: int = 1000) -> str:
     """Extract text from a PDF or Markdown file up to max_chars to use as vocabulary context."""
     ext = os.path.splitext(file_path)[1].lower()
@@ -476,7 +556,7 @@ async def process_file(
 
 async def main():
     parser = argparse.ArgumentParser(description="Qwen3-ASR File Streaming Transcriber with Vocal Extraction, VAD & Context (outputs TXT)", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("audio", help="Path to input audio file (.mp3, .wav, .m4a, ...)")
+    parser.add_argument("audio", help="Path to input audio file (.mp3, .wav, .m4a, ...) or URL (Bilibili, YouTube, etc.)")
     parser.add_argument("-e", "--endpoint", default="ws://localhost:9002/transcribe-streaming", help="WebSocket Endpoint URL")
     parser.add_argument("-l", "--language", default="English", help="Forced language full name (e.g. English, Chinese, Japanese)")
     parser.add_argument("-o", "--output", default=None, help="Output TXT file path (default: <audio_stem>.txt)")
@@ -489,7 +569,14 @@ async def main():
     parser.add_argument("--demucs-device", default="cuda", help="Device for demucs: cuda (default) or cpu / cuda:N.")
     parser.add_argument("--separated-dir", default=None, help="Where to store/reuse demucs output (default: separated/ next to the audio file).")
     parser.add_argument("--offset", default=None, help="Start time offset added to all timestamps. Format: hh:mm:ss, hh:mm (hours:minutes), or hh (hours). E.g. 18:00 = 18 hours, 1:30:00 = 1.5 hours.")
+    parser.add_argument("--download-dir", default="downloads", help="Where to store downloaded files when the input is a URL.")
+    parser.add_argument("--cookies-from-browser", default=None, help="Override browser used for cookies (firefox, chrome, chromium, edge, brave). Auto-detected if omitted.")
     args = parser.parse_args()
+
+    # Resolve URL input to a local file before the rest of the pipeline
+    audio_path = args.audio
+    if is_url(audio_path):
+        audio_path = download_url(audio_path, output_dir=args.download_dir, cookies_from_browser=args.cookies_from_browser)
 
     endpoint = args.endpoint
     if args.language:
@@ -503,7 +590,7 @@ async def main():
     offset = parse_time_str(args.offset) if args.offset else timedelta()
 
     await process_file(
-        args.audio,
+        audio_path,
         endpoint,
         context=context,
         output=args.output,

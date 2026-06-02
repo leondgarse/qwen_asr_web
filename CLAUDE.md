@@ -24,7 +24,7 @@ Server loads models in the background; poll `GET /health` until `"status": "read
 | `web_server.py` | Web UI server (port 8001) — serves `web/index.html`, `/api/chat`, `/api/translate`, `/api/extract-context`, `/api/session/*`, `/api/models`, `/api/config` |
 | `web/index.html` | Instructor UI — sessions, AI chat (with image input), live mic transcription, auto-translation |
 | `web/viewer.html` | Viewer UI — live transcription + translations via SSE, AI chat |
-| `client_file.py` | **Primary client** — vocal extraction → resample → VAD → streaming ASR (outputs TXT format) |
+| `client_file.py` | **Primary client** — accepts a local audio path or URL (Bilibili, YouTube, etc.); URL inputs are downloaded via yt-dlp, then vocal extraction → resample → VAD → streaming ASR (outputs TXT format) |
 | `client_mic.py` | Live microphone streaming client with VAD-based utterance detection |
 | `process_video.py` | Extract audio from video, start server, transcribe, save JSON |
 | `Qwen3-ASR-1.7B/` | ASR model weights |
@@ -90,17 +90,26 @@ Started as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 90
 ## client_file.py Pipeline
 
 ```
-input audio
-  → demucs (htdemucs --two-stems vocals)   # isolate human voice
-  → resample to 16kHz mono                  # scipy.signal.resample_poly
-  → WebRTC VAD aggressiveness=2             # split into speech segments
-  → stream each segment over WebSocket      # with optional vocabulary context
-  → <stem>.txt                             # one text line per segment with timestamp
+input (local path OR URL)
+  → yt-dlp download to downloads/<id>.<ext>   # only if input is a URL; cached by video id, skipped on re-run
+  → demucs (htdemucs --two-stems vocals)      # optional, with --vocal-extraction
+  → resample to 16kHz mono                    # scipy.signal.resample_poly
+  → WebRTC VAD aggressiveness=2               # split into speech segments
+  → stream each segment over WebSocket        # with optional vocabulary context
+  → <stem>.txt                               # one text line per segment with timestamp
 ```
 
 ```bash
 python client_file.py openclaw.mp3 --context foo.md --language en
+python client_file.py 'https://www.bilibili.com/video/BV1jEnuz9ESc/' --language Chinese
 ```
+
+**URL inputs** (`is_url()` → `download_url()` in `client_file.py`):
+- Detected by `http://` / `https://` prefix; routed through `yt-dlp -f bestaudio/best --no-playlist -o 'downloads/%(id)s.%(ext)s'`
+- `yt-dlp --get-id` resolves the video id first; if `downloads/<id>.*` already exists, the download step is skipped (re-runs are effectively instant)
+- `detect_browser_for_cookies()` scans common profile dirs (Firefox, Chrome, Chromium, Edge, Brave) and auto-attaches `--cookies-from-browser <name>`; override via `--cookies-from-browser`
+- Override the cache directory with `--download-dir`
+- Requires `yt-dlp` (already in environment); not in `requirements.txt`
 
 ## client_mic.py
 

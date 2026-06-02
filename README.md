@@ -6,7 +6,7 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 
 ## Features
 
-- **File transcription** — MP3/WAV/M4A/video audio → timestamped TXT
+- **File transcription** — MP3/WAV/M4A/video audio, or a Bilibili / YouTube URL → timestamped TXT
 - **Vocal extraction** — isolates human voice from background music before ASR (via [demucs](https://github.com/facebookresearch/demucs))
 - **VAD segmentation** — WebRTC VAD splits audio into speech segments
 - **Vocabulary context** — feed a PDF or Markdown document to improve domain-specific terminology
@@ -77,11 +77,20 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 | `ENABLE_ALIGNER_MODEL` | `false` | Set `true` to enable word-level timestamps |
 | `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches context prefix KV blocks across utterances |
 
-### 2. Transcribe a file
+### 2. Transcribe a file or URL
 
 ```bash
 python client_file.py audio.mp3 --language English
+python client_file.py 'https://www.bilibili.com/video/BV1jEnuz9ESc/' --language Chinese    # Bilibili
+python client_file.py 'https://www.youtube.com/watch?v=...' --language English             # YouTube
 ```
+
+URL inputs are downloaded via `yt-dlp -f bestaudio/best` into `downloads/<video-id>.<ext>` and then fed through the same pipeline. The download step auto-attaches `--cookies-from-browser` from the first installed browser it detects (Firefox / Chrome / Chromium / Edge / Brave), which is usually required for Bilibili. Re-running with the same URL reuses the cached download — only the ID-resolution call is re-issued.
+
+| URL-related flag | Default | Effect |
+|---|---|---|
+| `--download-dir` | `downloads` | Where downloaded media is cached (keyed by video id) |
+| `--cookies-from-browser` | auto-detect | Override which browser yt-dlp pulls cookies from (`firefox`, `chrome`, `chromium`, `edge`, `brave`) |
 
 For event recordings with background music, add `--vocal-extraction` to run demucs first:
 
@@ -106,7 +115,8 @@ Output: `<stem>.txt` — one line per speech segment:
 **How it works internally:**
 
 ```
-input audio
+input (local path OR URL)
+  → [yt-dlp download]        only when input is a URL; cached by video id
   → [demucs htdemucs]        only with --vocal-extraction
   → resample to 16kHz mono
   → WebRTC VAD (level 2)     split into speech segments
@@ -114,7 +124,9 @@ input audio
   → <stem>.txt
 ```
 
-> **When to use `--vocal-extraction`:** event recordings (conferences, meetups) with background music and PA noise. Without it the ASR model hallucinates repetitive generic phrases when fed music. For clean lecture/interview audio it is unnecessary overhead (adds several minutes of CPU time). Separated tracks are cached in `separated/` next to the audio file and reused on subsequent runs.
+> **When to use `--vocal-extraction`:** event recordings (conferences, meetups) with background music and PA noise — and the same applies to many Bilibili / YouTube clips with BGM. Without it the ASR model hallucinates repetitive generic phrases when fed music. For clean lecture/interview audio it is unnecessary overhead (adds several minutes of CPU time). Separated tracks are cached in `separated/` next to the audio file and reused on subsequent runs. Requires `pip install demucs`.
+
+> **`yt-dlp`** is required only for URL inputs and is not in `requirements.txt` — install with `pip install yt-dlp`. If a Bilibili download fails with an auth error, log into Bilibili in your browser first (the cookies are picked up automatically) or pass `--cookies-from-browser firefox` explicitly.
 
 ### 3. Live microphone transcription
 
@@ -144,6 +156,8 @@ If stuck on `[Recording...]`, background noise is triggering speech detection �
 |---|---|---|
 | `--offset` | `0:00:00` | Add time offset to all timestamps. Format: `hh:mm:ss`, `hh:mm`, or `hh` (e.g. `18:00` = 18 h, `1:30:00` = 1.5 h) |
 | `--output` | `<stem>.txt` | Custom output file path |
+| `--download-dir` | `downloads` | Cache directory for URL inputs (keyed by video id) |
+| `--cookies-from-browser` | auto-detect | Which browser yt-dlp pulls cookies from (`firefox`, `chrome`, `chromium`, `edge`, `brave`) |
 
 ### 4. Transcribe a video file
 
