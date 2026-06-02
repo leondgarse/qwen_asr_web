@@ -962,13 +962,39 @@ function normalizeMermaid(s) {
 function renderMd(s) { return typeof marked !== 'undefined' ? marked.parse(normalizeMermaid(s)) : esc(s).replace(/\n/g,'<br>'); }
 
 // Push current session to server for viewer broadcast (fire-and-forget)
+let _lastPushedAt = 0;
 function pushToServer() {
   const s = getSession(); if (!s) return;
+  _lastPushedAt = Date.now();
   fetch('/api/session/push', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ name: s.name, segments: s.transcription }),
   }).catch(() => {});
+}
+
+// Subscribe to broadcast so viewer-side edits flow back into localStorage.
+// Without this, the instructor's next pushToServer() would overwrite a viewer's edit.
+function subscribeBroadcast() {
+  const es = new EventSource('/api/session/stream');
+  es.onmessage = e => {
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.type !== 'update') return;
+    if (Date.now() - _lastPushedAt < 1500) return;   // ignore echo of our own push
+    const s = getSession(); if (!s) return;
+    const incoming = msg.segments || [];
+    // Merge text/translated edits in-place by index. Length differences (new segments
+    // added on the main side) are tolerated — we only patch overlapping indices.
+    let changed = false;
+    const n = Math.min(incoming.length, s.transcription.length);
+    for (let i = 0; i < n; i++) {
+      const inc = incoming[i], cur = s.transcription[i];
+      if (inc.text !== undefined && inc.text !== cur.text) { cur.text = inc.text; changed = true; }
+      if (inc.translated !== cur.translated) { cur.translated = inc.translated || ''; changed = true; }
+    }
+    if (changed) { saveState(); renderTranscriptionPanel(); }
+  };
+  es.onerror = () => { es.close(); setTimeout(subscribeBroadcast, 3000); };
 }
 
 function rms(f32) {
@@ -1700,6 +1726,7 @@ updateSrvLabel();
 renderSessions();
 if(sessions.length) switchSession(sessions[0].id);
 else createSession();
+subscribeBroadcast();
 
 // ── Image attach ──────────────────────────────────────────────
 document.getElementById('img-btn').addEventListener('click', () =>

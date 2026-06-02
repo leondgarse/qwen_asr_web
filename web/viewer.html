@@ -729,6 +729,14 @@ function updateTranslationToggleBtn() {
   btn.style.background = showTranslation ? 'rgba(59,130,246,0.1)' : 'none';
 }
 
+function pushSessionToServer() {
+  fetch('/api/session/push', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: document.getElementById('session-name').textContent || '', segments }),
+  }).catch(() => {});
+}
+
 function makeTrEntry(entry) {
   const div = document.createElement('div');
   div.className = 'tr-entry';
@@ -745,8 +753,12 @@ function makeTrEntry(entry) {
     const finish = (save) => {
       txtEl.contentEditable = 'false';
       txtEl.onkeydown = null;
-      if (save) { const v = txtEl.textContent.trim(); if (v) { entry.text = v; txtEl.textContent = v; } else txtEl.textContent = original; }
-      else txtEl.textContent = original;
+      if (save) {
+        const v = txtEl.textContent.trim();
+        if (v && v !== original) { entry.text = v; txtEl.textContent = v; pushSessionToServer(); }
+        else if (v) txtEl.textContent = v;
+        else txtEl.textContent = original;
+      } else txtEl.textContent = original;
     };
     txtEl.onkeydown = e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(true); }
