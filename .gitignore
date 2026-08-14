@@ -11,9 +11,9 @@ build/
 venv/
 env/
 
-# Model weights (large binary files)
-Qwen/Qwen3-ASR-*/
-Qwen/Qwen3-ForcedAligner-*/
+# Model weights (large binary files) — ASR, forced-aligner, VL, and the
+# HF cache layout (models--Qwen--*). Nothing in Qwen/ is source.
+Qwen/
 
 # Demucs vocal separation output
 separated/
