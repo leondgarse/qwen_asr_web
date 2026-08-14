@@ -25,7 +25,10 @@ demucs>=4.0
 
 # ── Streaming client ──────────────────────────────────────────────────────────
 websockets>=12.0
-webrtcvad>=2.0
+# Maintained fork of webrtcvad — same `import webrtcvad` API, but uses
+# importlib.metadata instead of pkg_resources (removed in setuptools>=81),
+# and ships prebuilt wheels. Do NOT install plain `webrtcvad` on Python 3.12+.
+webrtcvad-wheels>=2.0.14
 
 # ── Context extraction ────────────────────────────────────────────────────────
 pypdf>=4.0
