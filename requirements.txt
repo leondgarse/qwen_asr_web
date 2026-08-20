@@ -4,18 +4,16 @@ uvicorn>=0.30
 psutil>=6.0
 
 # ── Audio I/O & processing ────────────────────────────────────────────────────
+# torch/torchaudio are still required by demucs (vocal extraction) and silero-vad;
+# the ASR model itself now runs in llama-server, not in-process.
 torch>=2.0
 torchaudio>=2.0
 soundfile>=0.12
 sounddevice>=0.4
 scipy>=1.10
 numpy>=1.24
-transformers
-librosa
-nagisa
 python-multipart
-accelerate
-vllm
+httpx>=0.27
 
 # ── Vocal separation (client_file.py --vocal-extraction) ─────────────────────
 # NOTE: torchaudio 2.9.x requires torchcodec which needs FFmpeg shared libs
@@ -40,9 +38,14 @@ requests>=2.28
 # ── System dependency (not pip-installable) ───────────────────────────────────
 # ffmpeg >= 4.x  →  sudo apt install ffmpeg
 
-# Neural VAD for server_llama_cpp.py segmentation. Measured 19.2% WER vs 26.0%
+# ── Server-side VAD (server.py) ──────────────────────────────────────────────
+# Neural VAD. Measured 19.2% WER vs 26.0%
 # for webrtcvad against a human-checked transcript — it recovers quiet speech
 # (notably student answers) that an energy/webrtc gate drops. Optional: the
 # server falls back to webrtcvad if this is missing (STREAM_VAD_BACKEND=webrtc).
 silero-vad>=5.1
 onnxruntime>=1.17
+
+# ── Runtime (not pip-installable) ────────────────────────────────────────────
+# llama.cpp >= b9173 providing `llama-server` on PATH. Earlier builds load the
+# model and encode audio but transcribe everything as empty output.

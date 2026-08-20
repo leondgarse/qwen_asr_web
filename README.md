@@ -11,8 +11,6 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 - **VAD segmentation** — WebRTC VAD splits audio into speech segments
 - **Vocabulary context** — feed a PDF or Markdown document to improve domain-specific terminology
 - **Streaming** — real-time transcription over WebSocket; audio sent as captured, partial results shown immediately
-- **Prefix caching** — vLLM APC reuses KV-cache for the shared context/system-prompt prefix across utterances
-- **Forced alignment** — word-level timestamps via Qwen3-ForcedAligner
 - **Microphone input** — live transcription from system mic
 - **Web UI** — instructor interface with session management, live mic transcription, AI chat, segment translation, and export
 - **Viewer page** — read-only live view for students; receives real-time transcription, partials, and translations via SSE; includes AI chat using the instructor's API keys
@@ -25,11 +23,19 @@ Local speech-to-text service powered by [Qwen3-ASR](https://github.com/QwenLM/Qw
 
 | Model | Size | Purpose |
 |---|---|---|
-| `Qwen3-ASR-1.7B` | ~4 GB | Speech recognition |
-| `Qwen3-ForcedAligner-0.6B` | ~1.2 GB | Word-level timestamps |
-| `Qwen3-VL-2B-Instruct` *(optional)* | ~4.5 GB | Vision-language chat + translation |
+| `Qwen3-ASR-1.7B-Q8_0.gguf` + `mmproj-*` | ~2.5 GB | Speech recognition |
+| `Qwen3-VL-4B-Instruct-Q4_K_M.gguf` + `mmproj-*` *(optional)* | ~3.3 GB | Vision-language chat + translation |
 
-ASR and aligner are loaded from local directories at startup. ASR inference is handled by [`qwen_asr_inference`](https://github.com/QwenLM/Qwen3-ASR). The VL model runs as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 9004).
+Both models run as `llama-server` subprocesses (ASR on an internal port, VL on `VL_PORT`,
+default 9004), which `server.py` spawns and proxies to.
+
+**GGUF models ship as two files** — a decoder plus an `mmproj-*` encoder — unlike the HF
+safetensors layout where the encoder lives inside the same file. Passing only the decoder
+starts the server successfully but silently disables audio/image input, so startup verifies
+the reported modality and fails loudly instead.
+
+**Requires llama.cpp ≥ b9173** providing `llama-server` on `PATH`. Earlier builds load the
+model and encode audio but transcribe everything as empty output.
 
 ## Setup
 
@@ -44,8 +50,8 @@ pip install -r requirements.txt
 ```bash
 CUDA_VISIBLE_DEVICES=0 python server.py
 CUDA_VISIBLE_DEVICES=0 python server.py --port 9000                             # custom port
-CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl                                # + Qwen3-VL-2B-Instruct
-CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl Qwen/Qwen2.5-VL-7B-Instruct   # custom VL model
+CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl                                # + Qwen3-VL-4B-Instruct
+CUDA_VISIBLE_DEVICES=0 python server.py --qwenvl path/to/model.gguf             # custom VL model
 CUDA_VISIBLE_DEVICES=0,1 python server.py --qwenvl --vl-device 1                # VL on GPU 1, ASR on GPU 0
 CUDA_VISIBLE_DEVICES=0,1 python server.py --asr-device 0 --qwenvl --vl-device 1 # explicit GPU assignment
 ```
@@ -64,18 +70,18 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 
 | Variable | Default | Description |
 |---|---|---|
-| `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | Local path or HF model ID |
-| `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
-| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR model; auto targets ~8 GB (3.87 GB weights + ~2 GB encoder profiling + ~2 GB KV cache at `max_model_len=4096`) |
-| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; 8 GB cap when sharing GPU with ASR, 20 GB cap on dedicated GPU |
-| `VL_MAX_MODEL_LEN` | auto | VL context length; 2048 when sharing GPU with ASR, 4096 on dedicated GPU ≥10 GB |
+| `ASR_MODEL_PATH` | `Qwen/Qwen3-ASR-1.7B-Q8_0.gguf` | Decoder GGUF |
+| `ASR_MMPROJ_PATH` | `Qwen/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf` | Audio encoder GGUF |
+| `VL_MODEL_PATH` | `Qwen/Qwen3-VL-4B-Instruct-Q4_K_M.gguf` | VL decoder GGUF |
+| `VL_MMPROJ_PATH` | `Qwen/mmproj-Qwen3-VL-4B-Instruct-F16.gguf` | VL vision encoder GGUF |
+| `LLAMA_SERVER_BIN` | `llama-server` | Full path if not on `PATH` |
+| `STREAM_VAD_BACKEND` | `silero` | `silero` or `webrtc` for server-side re-segmentation |
+| `CONTEXT_GUARD` | `true` | Prevent context regurgitation on non-speech segments |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |
 | `ASR_PORT` | `9002` | Default port; overridden by `--port` CLI arg |
 | `ASR_DEVICE` | `""` | GPU index for ASR model (overridden by `--asr-device`) |
 | `VL_DEVICE` | `""` | GPU index for VL subprocess (overridden by `--vl-device`); empty = share GPU with ASR |
 | `ENABLE_ASR_MODEL` | `true` | |
-| `ENABLE_ALIGNER_MODEL` | `false` | Set `true` to enable word-level timestamps |
-| `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches context prefix KV blocks across utterances |
 
 ### 2. Transcribe a file or URL
 
@@ -266,7 +272,6 @@ For AWS EC2: also open port 8001 in the instance's **Security Group inbound rule
 
 ```bash
 curl -F "files=@audio.wav" "http://localhost:9002/transcribe?language=English"
-curl -F "files=@audio.wav" "http://localhost:9002/transcribe?language=English&forced_alignment=true"
 ```
 
 ### `WS /transcribe-streaming`

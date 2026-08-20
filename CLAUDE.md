@@ -1,44 +1,36 @@
 # Qwen3-ASR Transcription Server
 
-Speech-to-text service using local Qwen3-ASR-1.7B model via vLLM.
+Speech-to-text service using the local Qwen3-ASR-1.7B model via llama.cpp.
 
 ## Start
 
 ```bash
-python server.py                             # ASR + chat API, binds 0.0.0.0:9002
+python server.py                             # ASR, binds 0.0.0.0:9002
 python server.py --port 9000                 # custom port
-python server.py --qwenvl                    # + Qwen3-VL-2B-Instruct on VL_PORT (default 9004)
-python server.py --qwenvl Qwen/Model-Name    # custom VL model
-python server.py --qwenvl --vl-device 1     # VL on GPU 1 (2nd GPU), ASR on GPU 0
+python server.py --qwenvl                    # + Qwen3-VL-4B-Instruct on VL_PORT (default 9004)
+python server.py --qwenvl path/to/model.gguf # custom VL model
+python server.py --qwenvl --vl-device 1      # VL on GPU 1 (2nd GPU), ASR on GPU 0
 python server.py --asr-device 0 --qwenvl --vl-device 1  # explicit GPU assignment
 python web_server.py                         # Web UI, binds 0.0.0.0:8001
 ```
 
-Alternative llama.cpp backend (same endpoints, same port — drop-in for `server.py`):
-
-```bash
-python server_llama_cpp.py                              # ASR only, binds 0.0.0.0:9002
-python server_llama_cpp.py --qwenvl                      # + Qwen3-VL-4B-Instruct on VL_PORT
-python server_llama_cpp.py --asr-device 0 --qwenvl --vl-device 1
-```
-
 Server loads models in the background; poll `GET /health` until `"status": "ready"`.
+
+**Requires `llama-server` (llama.cpp ≥ b9173) on `PATH`.** Earlier builds load the model and
+encode audio but transcribe everything as empty output.
 
 ## Core Files
 
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI server (vLLM backend) — `/transcribe`, `/transcribe-streaming` (WebSocket), `/vl/health`, `/vl/proxy/{path}` |
-| `server_llama_cpp.py` | Same API on a llama.cpp backend — spawns `llama-server` subprocesses instead of loading models in-process |
+| `server.py` | FastAPI server — `/transcribe`, `/transcribe-streaming` (WebSocket), `/vl/health`, `/vl/proxy/{path}`; spawns `llama-server` subprocesses |
 | `web_server.py` | Web UI server (port 8001) — serves `web/index.html`, `/api/chat`, `/api/translate`, `/api/extract-context`, `/api/session/*`, `/api/models`, `/api/config` |
 | `web/index.html` | Instructor UI — sessions, AI chat (with image input), live mic transcription, auto-translation |
 | `web/viewer.html` | Viewer UI — live transcription + translations via SSE, AI chat |
 | `client_file.py` | **Primary client** — accepts a local audio path or URL (Bilibili, YouTube, etc.); URL inputs are downloaded via yt-dlp, then vocal extraction → resample → VAD → streaming ASR (outputs TXT format) |
 | `client_mic.py` | Live microphone streaming client with VAD-based utterance detection |
 | `process_video.py` | Extract audio from video, start server, transcribe, save JSON |
-| `Qwen3-ASR-1.7B/` | ASR model weights |
-| `Qwen3-ForcedAligner-0.6B/` | Forced-aligner model weights (word-level timestamps) |
-| `Qwen/*.gguf` | GGUF weights for the llama.cpp backend — each model needs a decoder **and** an `mmproj-*` encoder |
+| `Qwen/*.gguf` | GGUF weights — each model needs a decoder **and** a matching `mmproj-*` encoder |
 
 ## Web UI (`web/index.html`)
 
@@ -88,14 +80,16 @@ Session state held in-memory in `web_server.py`:
 
 ## VL Model (`--qwenvl`)
 
-Started as a separate vLLM OpenAI-compatible subprocess on `VL_PORT` (default 9004).
+Started as a separate `llama-server` subprocess on `VL_PORT` (default 9004), serving an
+OpenAI-compatible API.
 
-- GPU memory auto-sized from actual free GPU at startup:
-  - **Shared GPU** (no `--vl-device`): capped at `_VL_ESTIMATED_GB_4K = 8 GB` → leaves ~1.7 GB KV cache → `max_model_len = 2048`
-  - **Dedicated GPU** (`--vl-device`): capped at `_VL_MAX_GB = 20 GB` → leaves ~2.6 GB KV cache → `max_model_len = 4096` on ≥10 GB GPU
-- Minimum GPU free memory at startup: ~20 GB on a single shared GPU; ~10 GB each on separate GPUs (tested on 2× 11 GB)
-- Subprocess env strips ASR CPU vars (`VLLM_TARGET_DEVICE=cpu`, etc.) so VL runs on GPU
-- Accessed via `/vl/proxy/...` on main server — `web_server.py` never connects to `VL_PORT` directly
+- Needs a decoder GGUF **and** its `mmproj-*` vision encoder (`--qwenvl` / `--vl-mmproj`).
+  Without the mmproj the server starts fine but reports `"vision": false` and rejects images —
+  startup fails loudly rather than serving a text-only model.
+- Uses ~3.5 GB VRAM for `Qwen3-VL-4B-Instruct-Q4_K_M` (vs 8-20 GB budgeted by the old vLLM
+  path), so it comfortably shares a GPU with ASR; `--vl-device` pins it to a second GPU.
+- Accessed via `/vl/proxy/...` on the main server — `web_server.py` never connects to
+  `VL_PORT` directly.
 
 ## client_file.py Pipeline
 
@@ -137,12 +131,10 @@ python client_mic.py -e ws://host:port/transcribe-streaming
 - `SILENCE_END_FRAMES = 33` — ~1 s of silence ends an utterance
 - `ENERGY_THRESHOLD = 0.018` — RMS threshold; raise if background noise triggers false starts
 
-## llama.cpp Backend (`server_llama_cpp.py`)
+## Server Internals (`server.py`)
 
-Drop-in replacement for `server.py`: identical endpoints, request/response shapes, and default
-port (9002), so `web_server.py` and the web UI need no changes. Instead of loading models
-in-process, it spawns `llama-server` subprocesses and proxies to them (ASR on an internal port,
-default 9003; VL on `VL_PORT`).
+Rather than loading models in-process, the server spawns `llama-server` subprocesses and proxies
+to them (ASR on `ASR_INTERNAL_PORT`, default 9003; VL on `VL_PORT`).
 
 **Requires llama.cpp ≥ b9173.** Earlier builds load the model and encode audio but transcribe
 everything as empty output (`language None<asr_text>`) — see llama.cpp issue #22357.
@@ -170,9 +162,6 @@ field does **not** work — that slot is the vocabulary context.
 window of the utterance every `STREAM_PARTIAL_EVERY_S`. Partials run as cancellable background
 tasks so audio intake never blocks; the `final` is one clean pass over the whole utterance and
 matches `/transcribe` exactly.
-
-**`forced_alignment` is not supported** — returns 501. Qwen3-ForcedAligner-0.6B has no GGUF
-build, so word-level timestamps require `server.py`.
 
 **Server-side VAD re-segmentation.** Both `/transcribe` and the streaming `final` re-segment
 audio via `vad_split()` before decoding: whole-file uploads and long utterances otherwise
@@ -210,7 +199,7 @@ Measured on `data/08_14_3.wav` (57 min) vs the vLLM reference transcript: 4.6% w
 0 language-drift lines, ~84 s wall (vs ~597 s for vLLM). Q8_0 and bf16 differ by only 0.9% from
 each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better default.
 
-### llama.cpp Backend Env Vars
+### Server Env Vars
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -239,24 +228,6 @@ each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better
 `MAX_NEW_TOKENS` (default `512` here), `ASR_PORT`, `VL_PORT`, `ASR_DEVICE`, `VL_DEVICE`, and
 `ENABLE_ASR_MODEL` behave as in `server.py`.
 
-## Server Env Vars (`server.py`, vLLM backend)
-
-| Variable | Default | Notes |
-|---|---|---|
-| `ASR_MODEL_NAME` | `Qwen3-ASR-1.7B` | local dir or HF model id |
-| `ALIGNER_MODEL_NAME` | `Qwen3-ForcedAligner-0.6B` | |
-| `GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for ASR; auto targets ~8 GB (3.87 GB weights + ~2 GB encoder profiling + ~2 GB KV cache at `max_model_len=4096`) |
-| `VL_GPU_MEMORY_UTILIZATION` | auto | vLLM GPU fraction for VL; 8 GB cap on shared GPU, 20 GB cap on dedicated GPU |
-| `VL_MAX_MODEL_LEN` | auto | VL context length; 2048 on shared GPU, 4096 on dedicated GPU ≥10 GB |
-| `VL_PORT` | `9004` | Internal port for VL subprocess |
-| `ASR_DEVICE` | `""` | GPU index for ASR model (overridden by `--asr-device`) |
-| `VL_DEVICE` | `""` | GPU index for VL subprocess (overridden by `--vl-device`); empty = share GPU with ASR |
-| `MAX_NEW_TOKENS` | `8192` | |
-| `ENABLE_ASR_MODEL` | `true` | set `false` to skip |
-| `ENABLE_ALIGNER_MODEL` | `false` | set `true` to enable word-level timestamps |
-| `ENABLE_PREFIX_CACHING` | `true` | vLLM APC — caches KV blocks for shared prefix |
-| `ASR_PORT` | `9002` | default port; overridden by `--port` CLI arg |
-
 ## Web Server CLI Args
 
 | Arg | Default | Description |
@@ -283,15 +254,11 @@ each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better
 ## Key Notes
 
 - **Audio format for streaming**: PCM 16-bit signed little-endian, 16kHz mono. Send `{"type":"start","format":"pcm_s16le","sample_rate_hz":16000}` before audio bytes, then `{"type":"stop"}`.
-- **Forced alignment**: pass `?forced_alignment=true` to `/transcribe` for word-level timestamps.
 - **Event recordings**: always run demucs vocal extraction first — background music causes hallucination.
-- **`Qwen3ASRModel` does NOT have `.generate()`** — use `models["asr"].model.generate()`.
 - **GGUF needs an mmproj**: a decoder-only GGUF starts fine but silently reports `"audio": false` / `"vision": false` and rejects media. Always pass `--mmproj`.
 - **llama.cpp build matters**: < b9173 transcribes audio as empty output. Check with `llama-server --version`.
 - **Server restart required** after any change to `server.py` endpoints.
-- **Prefix caching (APC)**: context + system prompt tokens cached after first utterance. Disable with `ENABLE_PREFIX_CACHING=false` if unsupported.
 - **Viewer broadcast relay**: session state held in-memory in `web_server.py`; restarting clears it. Viewers reconnect automatically via SSE.
-- **VL subprocess env**: `VLLM_TARGET_DEVICE=cpu` (set for ASR CPU backend) is stripped before launching VL subprocess, so VL always runs on GPU.
 - **Translation history**: `entry.translated` stored in session alongside `entry.text`; persisted to `localStorage` and broadcast via SSE so viewers receive translations.
 - **HTML caching**: `web/index.html` and `web/viewer.html` served with `Cache-Control: no-cache` headers.
 - **Context stripping** (`strip_prompt()` in `server.py`): removes instruction prompts from ASR output when a vocabulary context is provided. Uses sentinel tags, instruction markers, exact-line matching, and prefix detection as cascading fallbacks.
