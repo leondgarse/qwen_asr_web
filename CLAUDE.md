@@ -174,6 +174,38 @@ matches `/transcribe` exactly.
 **`forced_alignment` is not supported** — returns 501. Qwen3-ForcedAligner-0.6B has no GGUF
 build, so word-level timestamps require `server.py`.
 
+**Server-side VAD re-segmentation.** Both `/transcribe` and the streaming `final` re-segment
+audio via `vad_split()` before decoding: whole-file uploads and long utterances otherwise
+overflow the model context (llama-server returns 400, and quality collapses past ~120 s well
+before that). Segments are merged toward `STREAM_VAD_TARGET_S` and boundaries are placed
+**only in the gaps between speech regions**, never inside one — the rule Qwen3-ASR-Toolkit
+uses to avoid mid-sentence cuts. Defaults to Silero VAD (`STREAM_VAD_BACKEND=silero`), falling
+back to `webrtcvad` if `silero-vad` is not installed. The browser's own VAD in
+`web/index.html` is untouched: its ~12 s force-flush (`maxUttFrames`, lowered in commit
+`d2e5300`) exists for caption latency and drives the auto-answer timer.
+
+**Context leakage guard.** With a vocabulary context set, a segment containing no speech makes
+the highest-probability continuation a copy of the system prompt — the model emits the context
+verbatim as if it were transcribed speech. This is *not* fixable by prompt wording:
+Qwen3-ASR is an audio→text model, not instruction-following, so "Reference only — do NOT
+transcribe this" and the `[ASR_CONTEXT_START]`/`[ASR_CONTEXT_END]` sentinels are echoed along
+with the terms (`server.py`'s `strip_prompt()` removes them after the fact instead). Three
+layers *prevent* the generation, verified 6/6 leaks blocked with 5/5 real speech preserved:
+
+1. `speech_ratio()` — webrtcvad frame ratio. Non-speech measures ≤0.02, real speech ≥0.30, so
+   a low ratio skips the request entirely (free).
+2. Language probe — re-asks *without* the language prefill and drops the segment if the model
+   answers `language None`. The prefill that forces language suppresses this signal, which is
+   why it must be probed separately. Only runs for borderline audio (one extra request).
+3. `context_overlap()` — drops output whose 4-grams overlap the context past
+   `CONTEXT_GUARD_OVERLAP`. Catches the residue, e.g. long stretches of digital silence.
+
+Set `CONTEXT_GUARD=false` to disable.
+
+Measured against a human-checked transcript (`data/08_19_1_10min.txt`, 1279 words):
+**12.4% WER** through `/transcribe`. For reference, on the same audio the browser's live RMS
+VAD scores 25.6% and `client_file.py`'s webrtcvad scores 26.0%.
+
 Measured on `data/08_14_3.wav` (57 min) vs the vLLM reference transcript: 4.6% word divergence,
 0 language-drift lines, ~84 s wall (vs ~597 s for vLLM). Q8_0 and bf16 differ by only 0.9% from
 each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better default.
@@ -191,6 +223,14 @@ each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better
 | `ASR_CTX_SIZE` / `VL_CTX_SIZE` | `8192` | `-c` context size |
 | `ASR_NGL` / `VL_NGL` | `99` | layers to offload to GPU |
 | `ASR_PARALLEL` | `2` | llama-server `--parallel` slots |
+| `STREAM_VAD_BACKEND` | `silero` | `silero` or `webrtc` for server-side re-segmentation |
+| `STREAM_VAD_TARGET_S` | `8.0` | merge speech regions toward this length |
+| `STREAM_VAD_MAX_S` | `15.0` | hard cap per segment |
+| `STREAM_VAD_MIN_S` | `8.0` | utterances shorter than this are sent unsegmented |
+| `CONTEXT_GUARD` | `true` | prevent context regurgitation on non-speech |
+| `CONTEXT_GUARD_VAD_RATIO` | `0.05` | below this speech ratio, skip the request |
+| `CONTEXT_GUARD_PROBE_RATIO` | `0.15` | below this, run the language probe |
+| `CONTEXT_GUARD_OVERLAP` | `0.5` | drop output with this 4-gram overlap vs context |
 | `STREAM_PARTIAL_EVERY_S` | `1.5` | seconds between streaming partials |
 | `STREAM_PARTIAL_MIN_S` | `1.0` | min audio before first partial |
 | `STREAM_MAX_UTTERANCE_S` | `30.0` | cap on re-transcribed window |

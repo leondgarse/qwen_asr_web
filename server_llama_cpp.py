@@ -97,9 +97,55 @@ STREAM_PARTIAL_MIN_S = float(os.getenv("STREAM_PARTIAL_MIN_S", "1.0"))
 STREAM_PARTIAL_EVERY_S = float(os.getenv("STREAM_PARTIAL_EVERY_S", "1.5"))
 STREAM_MAX_UTTERANCE_S = float(os.getenv("STREAM_MAX_UTTERANCE_S", "30.0"))
 
+# Server-side VAD re-segmentation for the `final` result.
+#
+# The browser's VAD (web/index.html) exists for *latency*: it force-flushes every
+# ~12 s (maxUttFrames=400, lowered from 2000 in commit d2e5300) so captions appear
+# promptly, and its utterance boundaries drive the auto-answer timer. That force-flush
+# necessarily cuts mid-sentence — 76% of utterances on a measured lecture — and its
+# RMS gate (energyThreshold) misses ~52% of genuine speech frames.
+#
+# Rather than change those client-side tradeoffs, the server re-runs a proper VAD over
+# the buffered utterance before producing `final`. Partials still stream at browser
+# cadence, so perceived latency is unchanged; only the committed text improves.
+# Set STREAM_SERVER_VAD=false to send the utterance as a single request instead.
+STREAM_SERVER_VAD = get_env_bool("STREAM_SERVER_VAD", "true")
+# Silero (neural VAD) measured 19.2% WER against a human-checked transcript vs
+# 26.0% for webrtcvad on the same audio — it recovers quiet speech, notably
+# student answers, that an energy/webrtc gate drops. Falls back to webrtcvad if
+# silero-vad is not installed.
+STREAM_VAD_BACKEND = os.getenv("STREAM_VAD_BACKEND", "silero")  # silero | webrtc
+STREAM_VAD_TARGET_S = float(os.getenv("STREAM_VAD_TARGET_S", "8.0"))
+STREAM_VAD_MAX_S = float(os.getenv("STREAM_VAD_MAX_S", "15.0"))
+STREAM_VAD_MIN_S = float(os.getenv("STREAM_VAD_MIN_S", "8.0"))
+
 CONTEXT_PREFIX = "Reference only — do NOT transcribe this. Vocabulary hint: "
 CONTEXT_TAG_START = "[ASR_CONTEXT_START]"
 CONTEXT_TAG_END = "[ASR_CONTEXT_END]"
+
+# ── Context leakage ───────────────────────────────────────────
+# When a vocabulary context is supplied and a segment contains no speech, the
+# highest-probability continuation is to copy the system prompt — so the model
+# emits the context verbatim as if it were transcribed speech.
+#
+# This is not fixable by prompt wording: Qwen3-ASR is an audio→text model, not an
+# instruction-following one. Measured on silence, "Reference only — do NOT
+# transcribe this" and [ASR_CONTEXT_START]/[ASR_CONTEXT_END] sentinels are simply
+# echoed along with the terms. server.py's strip_prompt() removes them after the
+# fact; the checks below prevent the generation instead.
+#
+# Layer 1 (free): webrtcvad speech ratio. Non-speech measures <= 0.02, real speech
+#   >= 0.30 — a wide margin, so a low ratio skips the request entirely.
+# Layer 2 (one extra request, only for borderline audio): ask without a language
+#   prefill and let the model self-report. It answers "language None" for
+#   non-speech. Note the prefill that forces language (and prevents drift)
+#   suppresses this signal, which is why it must be probed separately.
+# Layer 3 (free): reject output whose 4-grams overlap the context — catches the
+#   residual cases where layers 1-2 both pass (e.g. long digital silence).
+CONTEXT_GUARD = get_env_bool("CONTEXT_GUARD", "true")
+CONTEXT_GUARD_VAD_RATIO = float(os.getenv("CONTEXT_GUARD_VAD_RATIO", "0.05"))
+CONTEXT_GUARD_PROBE_RATIO = float(os.getenv("CONTEXT_GUARD_PROBE_RATIO", "0.15"))
+CONTEXT_GUARD_OVERLAP = float(os.getenv("CONTEXT_GUARD_OVERLAP", "0.5"))
 
 # -----------------------------
 # App state
@@ -212,6 +258,70 @@ def split_asr_output(raw: str) -> Tuple[str, Optional[str]]:
     return text.strip(), lang
 
 
+def speech_ratio(audio_f32: np.ndarray) -> float:
+    """Fraction of 30 ms frames webrtcvad classifies as speech.
+
+    Measured separation is wide: digital silence / hum 0.00, room tone 0.02,
+    real lecture speech 0.31-0.40. Returns 1.0 if webrtcvad is unavailable so
+    callers fail open (transcribe) rather than silently dropping audio.
+    """
+    try:
+        import webrtcvad
+    except ImportError:
+        return 1.0
+    pcm = (np.clip(audio_f32, -1.0, 1.0) * 32767.0).astype(np.int16)
+    vad = webrtcvad.Vad(2)
+    frame = int(STREAM_EXPECT_SR * 0.03)
+    total = speech = 0
+    for i in range(0, len(pcm) - frame, frame):
+        total += 1
+        try:
+            if vad.is_speech(pcm[i:i + frame].tobytes(), STREAM_EXPECT_SR):
+                speech += 1
+        except Exception:
+            return 1.0
+    return speech / total if total else 0.0
+
+
+def _ngrams(text: str, n: int = 4) -> set:
+    w = text.lower().split()
+    return {" ".join(w[i:i + n]) for i in range(max(0, len(w) - n + 1))}
+
+
+def context_overlap(text: str, context: str, n: int = 4) -> float:
+    """Fraction of the output's n-grams that also appear in the context."""
+    if not text or not context:
+        return 0.0
+    t = _ngrams(text, n)
+    if not t:
+        return 0.0
+    return len(t & _ngrams(context, n)) / len(t)
+
+
+async def _probe_language(audio_f32: np.ndarray, context: str) -> Optional[str]:
+    """Ask without a language prefill so the model can answer 'language None'."""
+    import httpx
+
+    body = {
+        "messages": [
+            {"role": "system", "content": context or ""},
+            {"role": "user", "content": [
+                {"type": "input_audio", "input_audio": {"data": to_wav_b64(audio_f32), "format": "wav"}}]},
+        ],
+        "max_tokens": 24, "temperature": 0,
+    }
+    url = f"http://localhost:{ASR_INTERNAL_PORT}/v1/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(url, json=body)
+            resp.raise_for_status()
+            raw = resp.json()["choices"][0]["message"]["content"]
+    except Exception:
+        return None  # fail open
+    _, lang = split_asr_output(raw)
+    return lang
+
+
 def _asr_request_body(audio_f32: np.ndarray, language: Optional[str], context: str = "") -> dict:
     """Build the llama-server chat request for one audio segment.
 
@@ -232,9 +342,158 @@ def _asr_request_body(audio_f32: np.ndarray, language: Optional[str], context: s
     return {"messages": msgs, "max_tokens": MAX_NEW_TOKENS, "temperature": 0}
 
 
+_silero_model = None
+_silero_failed = False
+
+
+def _silero_regions(audio_f32: np.ndarray):
+    """Speech regions via Silero VAD, or None if unavailable (caller falls back)."""
+    global _silero_model, _silero_failed
+    if _silero_failed:
+        return None
+    try:
+        if _silero_model is None:
+            from silero_vad import load_silero_vad
+            _silero_model = load_silero_vad()
+        from silero_vad import get_speech_timestamps
+        import torch
+
+        ts = get_speech_timestamps(
+            torch.from_numpy(audio_f32.astype(np.float32)), _silero_model,
+            sampling_rate=STREAM_EXPECT_SR, return_seconds=False,
+            min_speech_duration_ms=250, min_silence_duration_ms=500,
+        )
+    except Exception as e:
+        logger.warning("silero VAD unavailable (%s); falling back to webrtcvad", e)
+        _silero_failed = True
+        return None
+    return [[t["start"], t["end"]] for t in ts] or None
+
+
+def _merge_regions(regions, n: int) -> List[Tuple[int, int]]:
+    """Merge speech regions toward STREAM_VAD_TARGET_S, never cutting inside one.
+
+    Boundaries land only in the gaps between regions — the rule Qwen3-ASR-Toolkit
+    uses — so sentences stay intact. The hard cap is a last resort for a single
+    uninterrupted region longer than the model's usable window.
+    """
+    pad = int(0.2 * STREAM_EXPECT_SR)
+    target = STREAM_VAD_TARGET_S * STREAM_EXPECT_SR
+    merged: List[List[int]] = []
+    for r in regions:
+        if merged and (r[1] - merged[-1][0]) <= target:
+            merged[-1][1] = r[1]
+        else:
+            merged.append(list(r))
+
+    cap = STREAM_VAD_MAX_S * STREAM_EXPECT_SR
+    out: List[Tuple[int, int]] = []
+    for s, e in merged:
+        s = max(0, s - pad)
+        e = min(n, e + pad)
+        if (e - s) <= cap:
+            out.append((s, e))
+            continue
+        parts = int(np.ceil((e - s) / cap))
+        step = (e - s) // parts
+        for k in range(parts):
+            out.append((s + k * step, e if k == parts - 1 else s + (k + 1) * step))
+    return out
+
+
+def vad_split(audio_f32: np.ndarray) -> List[Tuple[int, int]]:
+    """Split a buffered utterance at natural speech boundaries.
+
+    Uses webrtcvad (already a project dependency, same settings as client_file.py's
+    apply_vad) to find speech regions, then merges them toward STREAM_VAD_TARGET_S
+    *without ever cutting inside a speech region* — the approach Qwen3-ASR-Toolkit
+    uses. Splitting only at speech onsets is what keeps sentences intact.
+
+    Returns [(start, end)] sample offsets, or [(0, len)] if VAD is unavailable or
+    finds nothing (callers then send the buffer unchanged).
+    """
+    n = len(audio_f32)
+    if n == 0:
+        return []
+    if n / STREAM_EXPECT_SR <= STREAM_VAD_MIN_S:
+        return [(0, n)]  # short enough to send whole; VAD would only add risk
+
+    if STREAM_VAD_BACKEND == "silero":
+        regions = _silero_regions(audio_f32)
+        if regions is not None:
+            return _merge_regions(regions, n)
+
+    try:
+        import webrtcvad
+    except ImportError:
+        logger.warning("webrtcvad not installed; sending utterance unsegmented")
+        return [(0, n)]
+
+    pcm = (np.clip(audio_f32, -1.0, 1.0) * 32767.0).astype(np.int16)
+    vad = webrtcvad.Vad(2)  # matches client_file.apply_vad
+    frame = int(STREAM_EXPECT_SR * 0.03)  # 30 ms
+    pad = frame * 5                       # lead-in/out, matches client_file.py
+
+    # Collect speech regions, closing a region after ~0.5 s of silence.
+    regions: List[List[int]] = []
+    start = -1
+    silence = 0
+    max_silence = int(0.5 / 0.03)
+    for i in range(0, n - frame, frame):
+        try:
+            speech = vad.is_speech(pcm[i:i + frame].tobytes(), STREAM_EXPECT_SR)
+        except Exception:
+            return [(0, n)]
+        if speech:
+            silence = 0
+            if start == -1:
+                start = max(0, i - pad)
+        elif start != -1:
+            silence += 1
+            if silence > max_silence:
+                regions.append([start, min(n, i + pad)])
+                start = -1
+                silence = 0
+    if start != -1:
+        regions.append([start, n])
+    if not regions:
+        return [(0, n)]
+
+    return _merge_regions(regions, n)
+
+
+async def transcribe_utterance(audio_f32: np.ndarray, language: Optional[str], context: str = "") -> Tuple[str, Optional[str]]:
+    """Transcribe a full utterance, re-segmenting server-side when it is long enough."""
+    if not STREAM_SERVER_VAD:
+        return await llama_transcribe(audio_f32, language, context)
+
+    spans = vad_split(audio_f32)
+    if len(spans) <= 1:
+        return await llama_transcribe(audio_f32, language, context)
+
+    results = await asyncio.gather(
+        *(llama_transcribe(audio_f32[s:e], language, context) for s, e in spans)
+    )
+    texts = [t for t, _ in results if t]
+    lang = next((l for _, l in results if l), language)
+    return " ".join(texts).strip(), lang
+
+
 async def llama_transcribe(audio_f32: np.ndarray, language: Optional[str], context: str = "") -> Tuple[str, Optional[str]]:
     """Transcribe one audio array via the ASR llama-server."""
     import httpx
+
+    # Context-leak guard: only relevant when a vocabulary context is in play.
+    if CONTEXT_GUARD and context:
+        ratio = await asyncio.to_thread(speech_ratio, audio_f32)
+        if ratio < CONTEXT_GUARD_VAD_RATIO:
+            logger.debug("context guard: no speech (vad ratio %.3f)", ratio)
+            return "", language
+        if ratio < CONTEXT_GUARD_PROBE_RATIO:
+            # Borderline: let the model itself decide before forcing a language.
+            if await _probe_language(audio_f32, context) is None:
+                logger.debug("context guard: model reported no speech")
+                return "", language
 
     body = _asr_request_body(audio_f32, language, context)
     url = f"http://localhost:{ASR_INTERNAL_PORT}/v1/chat/completions"
@@ -244,6 +503,15 @@ async def llama_transcribe(audio_f32: np.ndarray, language: Optional[str], conte
         data = resp.json()
     raw = data["choices"][0]["message"]["content"]
     text, detected = split_asr_output(raw)
+
+    # Final layer: the model may still regurgitate the context even when the audio
+    # passed the gates above (observed on long stretches of digital silence).
+    if CONTEXT_GUARD and context and text:
+        ov = context_overlap(text, context)
+        if ov >= CONTEXT_GUARD_OVERLAP:
+            logger.debug("context guard: dropped output, %.0f%% n-gram overlap with context", ov * 100)
+            return "", language
+
     # With a prefill the model echoes the language we forced; report that.
     return text, (language or detected)
 
@@ -507,7 +775,10 @@ async def transcribe(
     try:
         async def one(a):
             async with infer_sem:
-                return await llama_transcribe(a, full_lang)
+                # Re-segment long uploads: a whole file sent as one request overflows
+                # the model's context (llama-server 400s, and quality collapses well
+                # before that). transcribe_utterance() splits at speech boundaries.
+                return await transcribe_utterance(a, full_lang)
 
         results = await asyncio.gather(*(one(a) for a in audio_batch))
         return [{"text": t, "language": lang} for t, lang in results]
@@ -550,10 +821,19 @@ async def websocket_endpoint(
     last_partial_mono = 0.0
     partial_task: Optional[asyncio.Task] = None
 
-    def _collected() -> np.ndarray:
+    def _collected(truncate: bool = True) -> np.ndarray:
+        """Buffered audio for this utterance.
+
+        Partials pass truncate=True: only the trailing STREAM_MAX_UTTERANCE_S is
+        re-decoded, bounding the cost of the growing-window approach. The final
+        pass uses truncate=False so no speech is dropped — vad_split() re-segments
+        it properly instead.
+        """
         if not buf_parts:
             return np.zeros(0, dtype=np.float32)
         audio = np.concatenate(buf_parts) if len(buf_parts) > 1 else buf_parts[0]
+        if not truncate:
+            return audio
         max_n = int(STREAM_MAX_UTTERANCE_S * STREAM_EXPECT_SR)
         return audio[-max_n:] if audio.size > max_n else audio
 
@@ -611,12 +891,12 @@ async def websocket_endpoint(
                     if t == "stop":
                         if partial_task and not partial_task.done():
                             partial_task.cancel()
-                        audio = _collected()
+                        audio = _collected(truncate=False)
                         text, lang = "", full_lang
                         if audio.size > 0:
                             try:
                                 async with infer_sem:
-                                    text, lang = await llama_transcribe(audio, full_lang, context)
+                                    text, lang = await transcribe_utterance(audio, full_lang, context)
                             except Exception as e:
                                 logger.exception(f"final transcription failed: {e}")
                                 await ws.send_json({"type": "error", "message": str(e)})

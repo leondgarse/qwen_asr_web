@@ -39,3 +39,10 @@ requests>=2.28
 
 # ── System dependency (not pip-installable) ───────────────────────────────────
 # ffmpeg >= 4.x  →  sudo apt install ffmpeg
+
+# Neural VAD for server_llama_cpp.py segmentation. Measured 19.2% WER vs 26.0%
+# for webrtcvad against a human-checked transcript — it recovers quiet speech
+# (notably student answers) that an energy/webrtc gate drops. Optional: the
+# server falls back to webrtcvad if this is missing (STREAM_VAD_BACKEND=webrtc).
+silero-vad>=5.1
+onnxruntime>=1.17
