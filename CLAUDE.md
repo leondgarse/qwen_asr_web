@@ -14,13 +14,22 @@ python server.py --asr-device 0 --qwenvl --vl-device 1  # explicit GPU assignmen
 python web_server.py                         # Web UI, binds 0.0.0.0:8001
 ```
 
+Alternative llama.cpp backend (same endpoints, same port — drop-in for `server.py`):
+
+```bash
+python server_llama_cpp.py                              # ASR only, binds 0.0.0.0:9002
+python server_llama_cpp.py --qwenvl                      # + Qwen3-VL-4B-Instruct on VL_PORT
+python server_llama_cpp.py --asr-device 0 --qwenvl --vl-device 1
+```
+
 Server loads models in the background; poll `GET /health` until `"status": "ready"`.
 
 ## Core Files
 
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI server — `/transcribe`, `/transcribe-streaming` (WebSocket), `/chat` (SSE), `/vl/health`, `/vl/proxy/{path}` |
+| `server.py` | FastAPI server (vLLM backend) — `/transcribe`, `/transcribe-streaming` (WebSocket), `/vl/health`, `/vl/proxy/{path}` |
+| `server_llama_cpp.py` | Same API on a llama.cpp backend — spawns `llama-server` subprocesses instead of loading models in-process |
 | `web_server.py` | Web UI server (port 8001) — serves `web/index.html`, `/api/chat`, `/api/translate`, `/api/extract-context`, `/api/session/*`, `/api/models`, `/api/config` |
 | `web/index.html` | Instructor UI — sessions, AI chat (with image input), live mic transcription, auto-translation |
 | `web/viewer.html` | Viewer UI — live transcription + translations via SSE, AI chat |
@@ -29,6 +38,7 @@ Server loads models in the background; poll `GET /health` until `"status": "read
 | `process_video.py` | Extract audio from video, start server, transcribe, save JSON |
 | `Qwen3-ASR-1.7B/` | ASR model weights |
 | `Qwen3-ForcedAligner-0.6B/` | Forced-aligner model weights (word-level timestamps) |
+| `Qwen/*.gguf` | GGUF weights for the llama.cpp backend — each model needs a decoder **and** an `mmproj-*` encoder |
 
 ## Web UI (`web/index.html`)
 
@@ -127,19 +137,69 @@ python client_mic.py -e ws://host:port/transcribe-streaming
 - `SILENCE_END_FRAMES = 33` — ~1 s of silence ends an utterance
 - `ENERGY_THRESHOLD = 0.018` — RMS threshold; raise if background noise triggers false starts
 
-## server.py `/chat` Endpoint
+## llama.cpp Backend (`server_llama_cpp.py`)
 
-Uses the already-loaded ASR model for text chat:
+Drop-in replacement for `server.py`: identical endpoints, request/response shapes, and default
+port (9002), so `web_server.py` and the web UI need no changes. Instead of loading models
+in-process, it spawns `llama-server` subprocesses and proxies to them (ASR on an internal port,
+default 9003; VL on `VL_PORT`).
+
+**Requires llama.cpp ≥ b9173.** Earlier builds load the model and encode audio but transcribe
+everything as empty output (`language None<asr_text>`) — see llama.cpp issue #22357.
+
+**GGUF models ship as two files**: a decoder plus an `mmproj-*` encoder. This differs from the
+HF safetensors layout that vLLM uses, where the vision/audio encoder lives inside the same file.
+Passing only the decoder starts the server successfully but *silently* disables audio/image
+input, so `load_models()` verifies `/props` reports the expected modality and fails startup if
+not.
+
+**Language forcing** uses an assistant-prefill message (`_asr_request_body`):
 
 ```python
-asr = models["asr"]           # Qwen3ASRModel instance
-asr.model                     # underlying vllm.LLM — has .generate()
-asr.processor.tokenizer       # has .apply_chat_template()
+{"role": "assistant", "content": f"language {language}<asr_text>"}
 ```
 
-Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
+llama-server's `--prefill-assistant` (on by default) continues this message rather than starting
+a new turn — the same mechanism as vLLM's `_build_text_prompt`. Without it the model
+auto-detects language per segment and drifts to Chinese/Thai/Spanish on short filler utterances
+(24 drifted lines over a 57-min lecture; 0 with prefill). Setting the language via the `system`
+field does **not** work — that slot is the vocabulary context.
 
-## Server Env Vars
+**Streaming is re-transcription, not incremental.** llama.cpp has no equivalent of
+`init_streaming_state`/`streaming_transcribe`, so partials come from re-transcribing a growing
+window of the utterance every `STREAM_PARTIAL_EVERY_S`. Partials run as cancellable background
+tasks so audio intake never blocks; the `final` is one clean pass over the whole utterance and
+matches `/transcribe` exactly.
+
+**`forced_alignment` is not supported** — returns 501. Qwen3-ForcedAligner-0.6B has no GGUF
+build, so word-level timestamps require `server.py`.
+
+Measured on `data/08_14_3.wav` (57 min) vs the vLLM reference transcript: 4.6% word divergence,
+0 language-drift lines, ~84 s wall (vs ~597 s for vLLM). Q8_0 and bf16 differ by only 0.9% from
+each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better default.
+
+### llama.cpp Backend Env Vars
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ASR_MODEL_PATH` | `Qwen/Qwen3-ASR-1.7B-Q8_0.gguf` | decoder GGUF (`--asr-model`) |
+| `ASR_MMPROJ_PATH` | `Qwen/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf` | audio encoder (`--asr-mmproj`) |
+| `VL_MODEL_PATH` | `Qwen/Qwen3-VL-4B-Instruct-Q4_K_M.gguf` | VL decoder (`--qwenvl MODEL`) |
+| `VL_MMPROJ_PATH` | `Qwen/mmproj-Qwen3-VL-4B-Instruct-F16.gguf` | vision encoder (`--vl-mmproj`) |
+| `LLAMA_SERVER_BIN` | `llama-server` | full path if not on `PATH` |
+| `ASR_INTERNAL_PORT` | `9003` | internal ASR llama-server port |
+| `ASR_CTX_SIZE` / `VL_CTX_SIZE` | `8192` | `-c` context size |
+| `ASR_NGL` / `VL_NGL` | `99` | layers to offload to GPU |
+| `ASR_PARALLEL` | `2` | llama-server `--parallel` slots |
+| `STREAM_PARTIAL_EVERY_S` | `1.5` | seconds between streaming partials |
+| `STREAM_PARTIAL_MIN_S` | `1.0` | min audio before first partial |
+| `STREAM_MAX_UTTERANCE_S` | `30.0` | cap on re-transcribed window |
+| `STARTUP_TIMEOUT` | `300` | seconds to wait for llama-server ready |
+
+`MAX_NEW_TOKENS` (default `512` here), `ASR_PORT`, `VL_PORT`, `ASR_DEVICE`, `VL_DEVICE`, and
+`ENABLE_ASR_MODEL` behave as in `server.py`.
+
+## Server Env Vars (`server.py`, vLLM backend)
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -186,6 +246,8 @@ Quality is limited — Qwen3-ASR-1.7B is trained for audio→text, not chat.
 - **Forced alignment**: pass `?forced_alignment=true` to `/transcribe` for word-level timestamps.
 - **Event recordings**: always run demucs vocal extraction first — background music causes hallucination.
 - **`Qwen3ASRModel` does NOT have `.generate()`** — use `models["asr"].model.generate()`.
+- **GGUF needs an mmproj**: a decoder-only GGUF starts fine but silently reports `"audio": false` / `"vision": false` and rejects media. Always pass `--mmproj`.
+- **llama.cpp build matters**: < b9173 transcribes audio as empty output. Check with `llama-server --version`.
 - **Server restart required** after any change to `server.py` endpoints.
 - **Prefix caching (APC)**: context + system prompt tokens cached after first utterance. Disable with `ENABLE_PREFIX_CACHING=false` if unsupported.
 - **Viewer broadcast relay**: session state held in-memory in `web_server.py`; restarting clears it. Viewers reconnect automatically via SSE.
