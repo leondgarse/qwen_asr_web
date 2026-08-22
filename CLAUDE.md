@@ -19,6 +19,19 @@ Server loads models in the background; poll `GET /health` until `"status": "read
 **Requires `llama-server` (llama.cpp ≥ b9173) on `PATH`.** Earlier builds load the model and
 encode audio but transcribe everything as empty output.
 
+**Model files are optional.** If the local GGUF pair is missing, the server falls back to
+`llama-server -hf <repo>`, which downloads the decoder *and* its mmproj into the shared HF
+cache (`~/.cache/huggingface/hub`) and reuses them on later runs:
+
+| | default repo | override |
+|---|---|---|
+| ASR | `ggml-org/Qwen3-ASR-1.7B-GGUF` | `--asr-hf` / `ASR_HF_REPO` |
+| VL | `unsloth/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M` | `--vl-hf` / `VL_HF_REPO` |
+
+Local files always win, so an existing setup downloads nothing. Set the repo to `""` to
+require local files and fail with an explicit error instead. First run pulls ~2.5 GB (ASR) or
+~3.3 GB (VL), hence `STARTUP_TIMEOUT` defaults to 1800 s.
+
 ## Core Files
 
 | File | Purpose |
@@ -208,6 +221,8 @@ each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better
 | `VL_MODEL_PATH` | `Qwen/Qwen3-VL-4B-Instruct-Q4_K_M.gguf` | VL decoder (`--qwenvl MODEL`) |
 | `VL_MMPROJ_PATH` | `Qwen/mmproj-Qwen3-VL-4B-Instruct-F16.gguf` | vision encoder (`--vl-mmproj`) |
 | `LLAMA_SERVER_BIN` | `llama-server` | full path if not on `PATH` |
+| `ASR_HF_REPO` | `ggml-org/Qwen3-ASR-1.7B-GGUF` | HF GGUF repo used when local ASR files are absent (`--asr-hf`) |
+| `VL_HF_REPO` | `unsloth/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M` | HF GGUF repo used when local VL files are absent (`--vl-hf`) |
 | `ASR_INTERNAL_PORT` | `9003` | internal ASR llama-server port |
 | `ASR_CTX_SIZE` / `VL_CTX_SIZE` | `8192` | `-c` context size |
 | `ASR_NGL` / `VL_NGL` | `99` | layers to offload to GPU |
@@ -223,7 +238,7 @@ each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better
 | `STREAM_PARTIAL_EVERY_S` | `1.5` | seconds between streaming partials |
 | `STREAM_PARTIAL_MIN_S` | `1.0` | min audio before first partial |
 | `STREAM_MAX_UTTERANCE_S` | `30.0` | cap on re-transcribed window |
-| `STARTUP_TIMEOUT` | `300` | seconds to wait for llama-server ready |
+| `STARTUP_TIMEOUT` | `1800` | seconds to wait for llama-server ready (first run may download GBs) |
 
 `MAX_NEW_TOKENS` (default `512` here), `ASR_PORT`, `VL_PORT`, `ASR_DEVICE`, `VL_DEVICE`, and
 `ENABLE_ASR_MODEL` behave as in `server.py`.

@@ -43,9 +43,13 @@ _parser.add_argument(
 _parser.add_argument("--port", type=int, default=int(os.getenv("ASR_PORT", "9002")), help="Port to listen on (default: 9002)")
 _parser.add_argument("--asr-device", default=os.getenv("ASR_DEVICE", ""), metavar="N", help="GPU index for ASR llama-server, e.g. 0")
 _parser.add_argument("--vl-device", default=os.getenv("VL_DEVICE", ""), metavar="N", help="GPU index for VL llama-server, e.g. 1")
-_parser.add_argument("--asr-model", default=os.getenv("ASR_MODEL_PATH", "Qwen/Qwen3-ASR-1.7B-Q8_0.gguf"), help="Path to ASR decoder GGUF")
+_parser.add_argument("--asr-model", default=os.getenv("ASR_MODEL_PATH", "Qwen/Qwen3-ASR-1.7B-Q8_0.gguf"), help="Path to ASR decoder GGUF; falls back to --asr-hf if missing")
 _parser.add_argument("--asr-mmproj", default=os.getenv("ASR_MMPROJ_PATH", "Qwen/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf"), help="Path to ASR mmproj GGUF")
 _parser.add_argument("--vl-mmproj", default=os.getenv("VL_MMPROJ_PATH", "Qwen/mmproj-Qwen3-VL-4B-Instruct-F16.gguf"), help="Path to VL mmproj GGUF")
+_parser.add_argument("--asr-hf", default=os.getenv("ASR_HF_REPO", "ggml-org/Qwen3-ASR-1.7B-GGUF"), metavar="REPO[:QUANT]",
+                     help="HF GGUF repo used when the local ASR files are absent (llama-server -hf)")
+_parser.add_argument("--vl-hf", default=os.getenv("VL_HF_REPO", "unsloth/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M"), metavar="REPO[:QUANT]",
+                     help="HF GGUF repo used when the local VL files are absent (llama-server -hf)")
 _cli, _ = _parser.parse_known_args()
 
 VL_MODEL_NAME = _cli.qwenvl or os.getenv("VL_MODEL_NAME", "")
@@ -88,7 +92,9 @@ ASR_NGL = os.getenv("ASR_NGL", "99")
 VL_NGL = os.getenv("VL_NGL", "99")
 ASR_PARALLEL = int(os.getenv("ASR_PARALLEL", "2"))
 MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "512"))
-STARTUP_TIMEOUT = int(os.getenv("STARTUP_TIMEOUT", "300"))
+# Generous by default: a first run with no local GGUF downloads ~2.5 GB (ASR) or
+# ~3.3 GB (VL) before the server binds its port.
+STARTUP_TIMEOUT = int(os.getenv("STARTUP_TIMEOUT", "1800"))
 
 # Streaming: how much trailing audio to re-decode for each partial. llama.cpp
 # has no incremental/streaming ASR API, so partials are produced by
@@ -535,19 +541,38 @@ def _check_llama_server() -> None:
         )
 
 
-def _start_llama_server(model: str, mmproj: str, port: int, device: str, ctx: int, ngl: str, parallel: int, tag: str) -> subprocess.Popen:
+def _start_llama_server(model: str, mmproj: str, port: int, device: str, ctx: int, ngl: str,
+                        parallel: int, tag: str, hf_repo: str = "") -> subprocess.Popen:
+    """Start a llama-server for one model.
+
+    Prefers local GGUF files. If either half of the pair is missing and hf_repo is
+    set, falls back to `llama-server -hf <repo>`, which downloads the decoder *and*
+    its mmproj into the shared HF cache (~/.cache/huggingface/hub) and reuses them
+    on later runs. That pairing matters: a decoder without its mmproj starts fine
+    but silently disables audio/image input.
+    """
     model, mmproj = _resolve(model), _resolve(mmproj)
-    for p, what in ((model, "model"), (mmproj, "mmproj")):
-        if not os.path.exists(p):
-            raise RuntimeError(
-                f"{tag} {what} GGUF not found: {p}\n"
-                f"Note: GGUF multimodal models ship as two files — the decoder and its "
-                f"mmproj encoder. Without the mmproj, audio/image input is silently disabled."
-            )
+    missing = [what for p, what in ((model, "model"), (mmproj, "mmproj")) if not os.path.exists(p)]
+
+    if missing and not hf_repo:
+        raise RuntimeError(
+            f"{tag} {' and '.join(missing)} GGUF not found: {model} / {mmproj}\n"
+            f"Note: GGUF multimodal models ship as two files — the decoder and its "
+            f"mmproj encoder. Without the mmproj, audio/image input is silently disabled.\n"
+            f"Either place both files locally or set a HF repo (--{tag.lower()}-hf)."
+        )
+
+    source = ["--model", model, "--mmproj", mmproj]
+    if missing:
+        logger.info("%s GGUF not found locally (%s); downloading from HF repo %s",
+                    tag, ", ".join(missing), hf_repo)
+        # -hf pulls the matching mmproj automatically (--mmproj-auto, on by default).
+        source = ["-hf", hf_repo]
+    models[f"_{tag.lower()}_source"] = hf_repo if missing else model
+
     cmd = [
         LLAMA_SERVER_BIN,
-        "--model", model,
-        "--mmproj", mmproj,
+        *source,
         "--port", str(port),
         "--host", "127.0.0.1",
         "-ngl", str(ngl),
@@ -605,6 +630,7 @@ def load_models():
             proc = _start_llama_server(
                 _cli.asr_model, _cli.asr_mmproj, ASR_INTERNAL_PORT,
                 ASR_DEVICE, ASR_CTX_SIZE, ASR_NGL, ASR_PARALLEL, "ASR",
+                hf_repo=_cli.asr_hf,
             )
             models["_asr_proc"] = proc
             if not _wait_ready(ASR_INTERNAL_PORT, proc, "ASR"):
@@ -626,6 +652,7 @@ def load_models():
             proc = _start_llama_server(
                 VL_MODEL_NAME, _cli.vl_mmproj, VL_PORT,
                 VL_DEVICE, VL_CTX_SIZE, VL_NGL, 1, "VL",
+                hf_repo=_cli.vl_hf,
             )
             models["_vl_proc"] = proc
             if _wait_ready(VL_PORT, proc, "VL") and _check_modality(VL_PORT, "vision", "VL"):
@@ -708,7 +735,8 @@ async def health():
 async def vl_health():
     proc = models.get("_vl_proc")
     running = proc is not None and proc.poll() is None
-    return {"enabled": running, "model": VL_MODEL_NAME or None, "port": VL_PORT if running else None}
+    model = models.get("_vl_source") or VL_MODEL_NAME
+    return {"enabled": running, "model": model or None, "port": VL_PORT if running else None}
 
 
 @app.api_route("/vl/proxy/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])

@@ -37,6 +37,11 @@ the reported modality and fails loudly instead.
 **Requires llama.cpp ≥ b9173** providing `llama-server` on `PATH`. Earlier builds load the
 model and encode audio but transcribe everything as empty output.
 
+**Weights download themselves.** If the local GGUF pair is missing, the server falls back to
+`llama-server -hf`, pulling the decoder and its mmproj into `~/.cache/huggingface/hub`
+(`ggml-org/Qwen3-ASR-1.7B-GGUF`, `unsloth/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M` by default;
+override with `--asr-hf` / `--vl-hf`). Local files always take precedence.
+
 ## Setup
 
 ```bash
@@ -75,6 +80,8 @@ Poll `GET /health` until `"status": "ready"` before sending requests.
 | `VL_MODEL_PATH` | `Qwen/Qwen3-VL-4B-Instruct-Q4_K_M.gguf` | VL decoder GGUF |
 | `VL_MMPROJ_PATH` | `Qwen/mmproj-Qwen3-VL-4B-Instruct-F16.gguf` | VL vision encoder GGUF |
 | `LLAMA_SERVER_BIN` | `llama-server` | Full path if not on `PATH` |
+| `ASR_HF_REPO` | `ggml-org/Qwen3-ASR-1.7B-GGUF` | Fallback HF repo when local ASR GGUFs are absent |
+| `VL_HF_REPO` | `unsloth/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M` | Fallback HF repo when local VL GGUFs are absent |
 | `STREAM_VAD_BACKEND` | `silero` | `silero` or `webrtc` for server-side re-segmentation |
 | `CONTEXT_GUARD` | `true` | Prevent context regurgitation on non-speech segments |
 | `VL_PORT` | `9004` | Internal port for VL subprocess |
