@@ -886,6 +886,29 @@ const VAD_PROFILES = {
   mic: { silenceTrigger: 20,  energyThreshold: 0.018, maxUttFrames: 400  },  // ~0.6 s silence, force-flush ~12 s
   spk: { silenceTrigger: 30,  energyThreshold: 0.006, maxUttFrames: 400  },  // ~0.9 s silence, force-flush ~12 s
 };
+
+// ── Adaptive input gain ──────────────────────────────────────────────────────
+// A fixed energyThreshold assumes a fixed input level, which lecture halls break.
+// Measured across recordings: at 0.018 the VAD captured 89% of a close-mic
+// lecture but only 5-9% of three quiet hall recordings — i.e. over 90% of speech
+// never reached the model, which is the dominant cause of bad in-class results.
+// Rather than hand-tune the threshold per room, track the recent loud-frame level
+// and scale input up toward NOMINAL_RMS. Gain only ever amplifies, is capped, and
+// adapts slowly so it cannot pump on individual syllables.
+const NOMINAL_RMS = 0.05;
+const MAX_INPUT_GAIN = 20;
+let _inputGain = 1, _loudRms = 0;
+function updateInputGain(frameRms) {
+  // Track a slow envelope of the *loud* frames only, so silence does not inflate gain.
+  if (frameRms > _loudRms) _loudRms = 0.7 * _loudRms + 0.3 * frameRms;   // attack
+  else                     _loudRms = 0.999 * _loudRms + 0.001 * frameRms; // decay
+  if (_loudRms > 1e-5) {
+    const want = Math.min(NOMINAL_RMS / _loudRms, MAX_INPUT_GAIN);
+    _inputGain = Math.max(1, want);   // never attenuate: loud input is already fine
+  }
+  return _inputGain;
+}
+function resetInputGain() { _inputGain = 1; _loudRms = 0; }
 function vadProfile() { return VAD_PROFILES[document.getElementById('audio-src-select').value] || VAD_PROFILES.mic; }
 function SILENCE_TRIGGER()  { return vadProfile().silenceTrigger; }
 function ENERGY_THRESHOLD() { return vadProfile().energyThreshold; }
@@ -1533,6 +1556,10 @@ function startStreamingUtterance() {
 }
 
 function processVADFrame(frame) {
+  // Apply adaptive gain before the energy test *and* before sending, so a quiet
+  // room raises both VAD sensitivity and the level the model actually receives.
+  const g = updateInputGain(rms(frame));
+  if (g > 1.01) { for (let i = 0; i < frame.length; i++) frame[i] = Math.max(-1, Math.min(1, frame[i] * g)); }
   const speech = rms(frame) > ENERGY_THRESHOLD();
   if (!isSpeaking) {
     if (speech) {
@@ -1566,6 +1593,7 @@ function flushUtterance() {
 // ═══════════════════════════════════════════════════════════
 async function startRecording() {
   if (!getSession()) createSession();
+  resetInputGain();   // re-adapt per session; a new room may have a new level
 
   if (!navigator.mediaDevices?.getUserMedia) {
     const isLocalhost = ['localhost','127.0.0.1','::1'].includes(location.hostname);

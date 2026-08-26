@@ -40,3 +40,6 @@ asr_config.json
 
 # yt-dlp cache for URL inputs
 downloads/
+
+# Evaluation audio (large); the paired transcripts are tracked as fixtures.
+ground_truth/*.wav

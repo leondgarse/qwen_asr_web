@@ -186,6 +186,16 @@ back to `webrtcvad` if `silero-vad` is not installed. The browser's own VAD in
 `web/index.html` is untouched: its ~12 s force-flush (`maxUttFrames`, lowered in commit
 `d2e5300`) exists for caption latency and drives the auto-answer timer.
 
+**Auto-gain (`normalize_gain`).** Lecture-hall recordings arrive far quieter than a close mic
+— measured RMS 0.0085-0.014 vs ~0.05. At those levels the model mis-decodes (`consent` →
+`science`/`Tencent`) and, when a vocabulary context is set, falls back to regurgitating it.
+Every request is normalized to `AUDIO_TARGET_RMS` (peak-limited, amplify-only, capped at
+`AUDIO_MAX_GAIN`). This is the single highest-impact fix measured: mic-pipeline WER on a quiet
+lecture went **96.4% → 31.6%**. `web/index.html` does the same adaptively on the browser side
+before its VAD test, because a fixed `energyThreshold` assumes a fixed input level — at 0.018
+the browser VAD captured 89% of a close-mic lecture but only **5-9%** of three hall recordings,
+so >90% of speech never reached the model at all.
+
 **Context leakage guard.** With a vocabulary context set, a segment containing no speech makes
 the highest-probability continuation a copy of the system prompt — the model emits the context
 verbatim as if it were transcribed speech. This is *not* fixable by prompt wording:
@@ -199,8 +209,14 @@ layers *prevent* the generation, verified 6/6 leaks blocked with 5/5 real speech
 2. Language probe — re-asks *without* the language prefill and drops the segment if the model
    answers `language None`. The prefill that forces language suppresses this signal, which is
    why it must be probed separately. Only runs for borderline audio (one extra request).
-3. `context_overlap()` — drops output whose 4-grams overlap the context past
-   `CONTEXT_GUARD_OVERLAP`. Catches the residue, e.g. long stretches of digital silence.
+3. `scrub_context()` — cleans the decoded text. The earlier 4-gram whole-line check failed
+   in production: it split on whitespace only, so `"Consent Obligation."` (model) never
+   matched `"Consent Obligation"` (slide), scoring **0.00 on real leaks**. It also only ever
+   dropped entire segments, while the common form is a leak *appended to real speech*. The
+   replacement is punctuation-insensitive, collapses repetition loops first (`X. X. X.` shares
+   its n-gram profile with a single `X`), drops the line if ≥`CONTEXT_GUARD_OVERLAP` of it is
+   context, then trims context spans from the edges only — a term mid-sentence is usually the
+   lecturer genuinely saying it.
 
 Set `CONTEXT_GUARD=false` to disable.
 
@@ -234,7 +250,9 @@ each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better
 | `CONTEXT_GUARD` | `true` | prevent context regurgitation on non-speech |
 | `CONTEXT_GUARD_VAD_RATIO` | `0.05` | below this speech ratio, skip the request |
 | `CONTEXT_GUARD_PROBE_RATIO` | `0.15` | below this, run the language probe |
-| `CONTEXT_GUARD_OVERLAP` | `0.5` | drop output with this 4-gram overlap vs context |
+| `CONTEXT_GUARD_OVERLAP` | `0.75` | drop output with this 3-gram overlap vs context (leaks score 1.00, real speech ≤0.50) |
+| `AUDIO_TARGET_RMS` | `0.08` | normalize input to this RMS; `0` disables |
+| `AUDIO_MAX_GAIN` | `20.0` | cap on auto-gain |
 | `STREAM_PARTIAL_EVERY_S` | `1.5` | seconds between streaming partials |
 | `STREAM_PARTIAL_MIN_S` | `1.0` | min audio before first partial |
 | `STREAM_MAX_UTTERANCE_S` | `30.0` | cap on re-transcribed window |
