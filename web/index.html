@@ -930,6 +930,16 @@ function resetInputGain() { _inputGain = 1; _loudRms = 0; }
 // it no longer decides what reaches the model.
 const CONTINUOUS_CAPTURE = (localStorage.getItem('continuous_capture') ?? '1') === '1';
 const CONTINUOUS_FLUSH_S = 20;     // commit a segment at least this often
+// A 0.6 s pause is a breath, not a sentence end. In the gated path that only cut
+// within detected speech, but streaming everything means every breath would split
+// a segment: measured, 30% of segments came out under 2 s and many were a single
+// "Oh." — too short for the model to decode usefully. Require a longer pause and
+// a minimum length before committing.
+// Swept on real captured audio (Session_11, scored against Snapsight): 2.5 s
+// segments give 76.3% WER, 5 s 56.8%, 8 s 47.7%, 12 s 49.2%, 20 s 51.1%. Too
+// short starves the model of context; too long invites repetition loops.
+const CONTINUOUS_MIN_S = 8.0;      // never commit a segment shorter than this
+const CONTINUOUS_PAUSE_S = 1.2;    // silence needed to treat a gap as a sentence end
 
 const PREROLL_FRAMES = 10;         // ~300 ms at 30 ms/frame
 let _preroll = [];
@@ -1643,9 +1653,10 @@ function processVADFrame(frame) {
     uttFrameCount++;
     if (speech) { silenceCount = 0; setRecStatus('Speaking…'); if (_autoAnswerTimer) cancelAutoAnswer(); }
     else        { silenceCount++;   setRecStatus('Listening…'); }
-    const pause  = silenceCount >= SILENCE_TRIGGER();
+    const pause  = silenceCount >= Math.round(CONTINUOUS_PAUSE_S * 1000 / 30);
+    const longEnough = uttFrameCount >= Math.round(CONTINUOUS_MIN_S * 1000 / 30);
     const tooLong = uttFrameCount >= Math.round(CONTINUOUS_FLUSH_S * 1000 / 30);
-    if ((pause && uttFrameCount > SPEECH_TRIGGER) || tooLong) {
+    if ((pause && longEnough) || tooLong) {
       // Commit this stretch. The next frame reopens a socket immediately, so no
       // audio falls between the two.
       if (currentUtt) { currentUtt.stop(); currentUtt = null; }

@@ -1,0 +1,8 @@
+Walter, go ahead. Yes, I think you brought up a very interesting point. There's no There's always a debate of one Buil This is by Right
+And currently there is a notional idea that because of the advances in AI solutions that we have There seems to be an inclination more To build, ah, last week I was just at a at a SCS conference and a government official was talking about how one government agency, right, is going to to do a lot more in-house insourcing of solutions
+I think it's a balance. So the question, remember at the earlier part of the session, I was say then there's another dimension to it
+If you are going to build event, do I go for the open source models or do I go for the frontier models and for me as a business person, as well as doing consulting work for companies, I come back to the business model
+Meaning is either way are possible and some people have gone on a hybrid approach, meaning that for some layers, they will be for some layers they'll buy. One way to leave a talk with all of us here today to go through this complexity of all our discussion, one way to view this new AI agentic AI arena is a concept of orchestrate orchestration
+So all of us, all your agents, all your solutions, all your data layers are different components of the orchestra, and it's really complicated
+And it is not a case whereby you're going to get rid of the whole orchestra and build a new band altogether
+But AI now can help us be an orchestration. In fact, I was working on a project with a large retail company and that's exactly how we build the agentic AI layer to be an orchestration layer so that you do not assume that all your silos and your layers are already perfected, but in fact, you use agentic AI to work through the imperfection
