@@ -43,3 +43,6 @@ downloads/
 
 # Evaluation audio (large); the paired transcripts are tracked as fixtures.
 ground_truth/*.wav
+
+# Captured live audio (CAPTURE_AUDIO=true)
+captures/

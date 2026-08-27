@@ -43,6 +43,7 @@ require local files and fail with an explicit error instead. First run pulls ~2.
 | `client_file.py` | **Primary client** — accepts a local audio path or URL (Bilibili, YouTube, etc.); URL inputs are downloaded via yt-dlp, then vocal extraction → resample → VAD → streaming ASR (outputs TXT format) |
 | `client_mic.py` | Live microphone streaming client with VAD-based utterance detection |
 | `process_video.py` | Extract audio from video, start server, transcribe, save JSON |
+| `replay_capture.py` | Rebuild a `CAPTURE_AUDIO` session into a WAV + transcript; `--rerun` diffs current code against the live run |
 | `Qwen/*.gguf` | GGUF weights — each model needs a decoder **and** a matching `mmproj-*` encoder |
 
 ## Web UI (`web/index.html`)
@@ -186,6 +187,26 @@ back to `webrtcvad` if `silero-vad` is not installed. The browser's own VAD in
 `web/index.html` is untouched: its ~12 s force-flush (`maxUttFrames`, lowered in commit
 `d2e5300`) exists for caption latency and drives the auto-answer timer.
 
+**Audio capture (`CAPTURE_AUDIO`).** Off by default. When enabled, every utterance received
+over the WebSocket is written to `captures/<session>/` as 16 kHz mono WAV, alongside a
+`transcript.jsonl` recording the text, language and duration the server produced live. Audio is
+saved *before* auto-gain, so a capture reflects what the browser actually sent. The client
+passes its session name in the `start` message, so a whole lecture groups into one directory
+even though each utterance is a separate WebSocket. `CAPTURE_MAX_MB` (default 2048) stops the
+directory growing without bound, and every failure is logged and swallowed — capture must never
+break a live lecture.
+
+`replay_capture.py` turns a capture back into a fixture:
+
+```bash
+python replay_capture.py captures/CS5432_week_3           # stitch to <session>.wav + .txt
+python replay_capture.py captures/CS5432_week_3 --rerun   # re-transcribe, diff vs the live run
+```
+
+This is the practical way to get real in-class audio for testing the mic path, which is
+otherwise the hardest input to reproduce. Note it records real lecture audio including student
+voices — enable it deliberately.
+
 **Auto-gain (`normalize_gain`).** Lecture-hall recordings arrive far quieter than a close mic
 — measured RMS 0.0085-0.014 vs ~0.05. At those levels the model mis-decodes (`consent` →
 `science`/`Tencent`) and, when a vocabulary context is set, falls back to regurgitating it.
@@ -251,6 +272,9 @@ each other, while bf16 is 2.2× slower and 1.9× the disk — Q8_0 is the better
 | `CONTEXT_GUARD_VAD_RATIO` | `0.05` | below this speech ratio, skip the request |
 | `CONTEXT_GUARD_PROBE_RATIO` | `0.15` | below this, run the language probe |
 | `CONTEXT_GUARD_OVERLAP` | `0.75` | drop output with this 3-gram overlap vs context (leaks score 1.00, real speech ≤0.50) |
+| `CAPTURE_AUDIO` | `false` | save received utterances to `CAPTURE_DIR` for testing |
+| `CAPTURE_DIR` | `captures` | where captures are written |
+| `CAPTURE_MAX_MB` | `2048` | stop capturing once the directory exceeds this |
 | `AUDIO_TARGET_RMS` | `0.08` | normalize input to this RMS; `0` disables |
 | `AUDIO_MAX_GAIN` | `20.0` | cap on auto-gain |
 | `STREAM_PARTIAL_EVERY_S` | `1.5` | seconds between streaming partials |

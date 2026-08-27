@@ -1529,6 +1529,9 @@ function startStreamingUtterance() {
     ws.send(JSON.stringify({
       type: 'start', format: 'pcm_s16le', sample_rate_hz: TARGET_SR, channels: 1,
       context: contextText ? contextText.slice(0, 1000) : '',
+      // Each utterance is its own WebSocket; this groups a whole lecture's
+      // captures into one directory when CAPTURE_AUDIO is enabled server-side.
+      session: (getSession()?.name || '').slice(0, 64),
     }));
     for (const buf of pending) ws.send(buf);
     pending.length = 0;

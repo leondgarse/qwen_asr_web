@@ -149,6 +149,20 @@ CONTEXT_TAG_END = "[ASR_CONTEXT_END]"
 #   suppresses this signal, which is why it must be probed separately.
 # Layer 3 (free): reject output whose 4-grams overlap the context — catches the
 #   residual cases where layers 1-2 both pass (e.g. long digital silence).
+# ── Audio capture (for building test fixtures) ───────────────────────────────
+# Off by default: this writes every utterance received over the WebSocket to
+# disk, which is a privacy-relevant side effect and grows without bound. Enable
+# deliberately when collecting real in-class audio, which is otherwise the
+# hardest thing to get for testing the live mic path.
+#
+# Each session writes <dir>/<session>/NNN_<ms>.wav plus a transcript.jsonl with
+# the text, language and offset per utterance, so a capture replays directly as
+# a scoring fixture. Audio is saved *before* auto-gain so the recording reflects
+# what the browser actually sent.
+CAPTURE_AUDIO = get_env_bool("CAPTURE_AUDIO", "false")
+CAPTURE_DIR = os.getenv("CAPTURE_DIR", "captures")
+CAPTURE_MAX_MB = float(os.getenv("CAPTURE_MAX_MB", "2048"))
+
 # Auto-gain. Quiet room recordings are the dominant cause of both mis-decoding and
 # context regurgitation; normalizing before inference fixes far more than any
 # post-hoc filter. Set AUDIO_TARGET_RMS=0 to disable.
@@ -235,6 +249,48 @@ def resample_16k(audio_f32: np.ndarray, sr: int) -> np.ndarray:
 
     g = gcd(int(sr), 16000)
     return resample_poly(audio_f32, 16000 // g, int(sr) // g).astype(np.float32)
+
+
+def _capture_dir_size_mb(path: str) -> float:
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total / (1024 * 1024)
+
+
+def save_capture(session: str, index: int, audio_f32: np.ndarray, meta: dict) -> None:
+    """Persist one utterance as 16-bit WAV plus a JSONL metadata line.
+
+    Best-effort: capture must never break a live lecture, so every failure is
+    logged and swallowed. Called with the raw (pre-gain) audio.
+    """
+    if not CAPTURE_AUDIO or audio_f32.size == 0:
+        return
+    try:
+        base = os.path.join(CAPTURE_DIR, session)
+        os.makedirs(base, exist_ok=True)
+        if _capture_dir_size_mb(CAPTURE_DIR) > CAPTURE_MAX_MB:
+            logger.warning("capture: %s over CAPTURE_MAX_MB (%.0f MB), skipping",
+                           CAPTURE_DIR, CAPTURE_MAX_MB)
+            return
+        # Millisecond timestamp leads so files sort chronologically within a
+        # session: index restarts at 1 for every socket (one per utterance).
+        name = f"{int(time.time() * 1000)}_{index:03d}"
+        pcm = (np.clip(audio_f32, -1.0, 1.0) * 32767.0).astype(np.int16)
+        with wave.open(os.path.join(base, name + ".wav"), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(STREAM_EXPECT_SR)
+            w.writeframes(pcm.tobytes())
+        rec = {"file": name + ".wav", "seconds": round(audio_f32.size / STREAM_EXPECT_SR, 2), **meta}
+        with open(os.path.join(base, "transcript.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning("capture failed: %s", e)
 
 
 def normalize_gain(audio_f32: np.ndarray, target_rms: float = 0.0) -> np.ndarray:
@@ -944,6 +1000,8 @@ async def websocket_endpoint(
     full_lang = map_language(language)
     started = False
     context = ""
+    capture_session = time.strftime("%Y%m%d_%H%M%S") if CAPTURE_AUDIO else ""
+    capture_index = 0
 
     try:
         await ws.send_json({"type": "ready"})
@@ -1010,6 +1068,12 @@ async def websocket_endpoint(
                         client_sr = int(data.get("sample_rate_hz", 0)) if data.get("sample_rate_hz") else None
                         fmt = data.get("format")
                         context = data.get("context", "") or ""
+                        if CAPTURE_AUDIO:
+                            # Group a lecture's utterances (each its own socket)
+                            # under one directory, per the client's session name.
+                            client_session = re.sub(r"[^\w.-]", "_", str(data.get("session", ""))[:64]).strip("_")
+                            if client_session:
+                                capture_session = client_session
 
                         if client_sr != STREAM_EXPECT_SR or fmt not in (None, "pcm_s16le"):
                             await ws.send_json({"type": "error", "message": f"Only pcm_s16le @ {STREAM_EXPECT_SR}Hz supported"})
@@ -1034,6 +1098,12 @@ async def websocket_endpoint(
                             except Exception as e:
                                 logger.exception(f"final transcription failed: {e}")
                                 await ws.send_json({"type": "error", "message": str(e)})
+                        if CAPTURE_AUDIO and audio.size > 0:
+                            capture_index += 1
+                            await asyncio.to_thread(
+                                save_capture, capture_session, capture_index, audio,
+                                {"text": text, "language": lang, "has_context": bool(context)},
+                            )
                         await ws.send_json({"type": "final", "text": text, "language": lang})
                         await ws.close(code=1000)
                         return
