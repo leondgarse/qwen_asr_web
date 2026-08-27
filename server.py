@@ -299,11 +299,14 @@ def _write_capture(session: str, index: int, pcm: np.ndarray, meta: dict) -> Non
             w.setsampwidth(2)
             w.setframerate(STREAM_EXPECT_SR)
             w.writeframes(pcm.tobytes())
-        rec = {"file": name + ".wav", "seconds": round(audio_f32.size / STREAM_EXPECT_SR, 2), **meta}
+        rec = {"file": name + ".wav", "seconds": round(pcm.size / STREAM_EXPECT_SR, 2), **meta}
         with open(os.path.join(base, "transcript.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except Exception as e:
-        logger.warning("capture failed: %s", e)
+    except Exception:
+        # Still non-fatal, but log the traceback: a silently swallowed NameError
+        # here once cost a whole session's transcripts while the WAVs kept
+        # appearing, which made the failure look like it wasn't happening.
+        logger.exception("capture failed")
 
 
 def normalize_gain(audio_f32: np.ndarray, target_rms: float = 0.0) -> np.ndarray:
