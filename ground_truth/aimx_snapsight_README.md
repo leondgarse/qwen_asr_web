@@ -1,13 +1,32 @@
 # AIMX / Snapsight reference transcript
 
-`aimx_snapsight.txt` is the transcript produced by Snapsight for the session
-"From Data to Decisions: AI in the Next Generation of Supply Chains", captured
-from the attendee live-channel page.
+`aimx_snapsight.txt` is Snapsight's transcript of the session "From Data to
+Decisions: AI in the Next Generation of Supply Chains", copied from the
+attendee live-channel page (the page renders client-side and its API requires a
+key, so it cannot be fetched programmatically).
 
-**No paired audio.** We did not record this session, so this cannot be scored
-for WER — it is a *style* reference only (how a commercial live-ASR system
-handles domain terms, speaker turns, disfluency and filler), not ground truth.
+## Overlap with our captures
 
-To make it comparable, a `CAPTURE_AUDIO=true` recording of the same session
-would be needed; the resulting `*_RAW.wav` could then be transcribed locally and
-scored against this file the way `*_plaud.txt` are used.
+`captures/Session_1/` was recorded during part of the same panel, so a genuine
+paired comparison is possible — but only over a **short overlap**:
+
+- our capture ends mid-sentence at "when people get..." while the Snapsight
+  text continues through the rapid-fire round;
+- the `*_RAW.wav` files cover an *earlier* stretch than the pasted excerpt (1 of
+  12 distinctive phrases matched), so only the live utterance transcripts line up.
+
+On the ~35 words both cover, **WER vs Snapsight is 28.6%**. That is one
+sentence — indicative only, far too small to draw conclusions from.
+
+## To get a real number
+
+Record a full session with `CAPTURE_AUDIO=true` running for its whole duration,
+then export the complete Snapsight transcript for the same session. The
+`*_RAW.wav` and that transcript would give a multi-thousand-word paired sample,
+scoreable the way `*_plaud.txt` are.
+
+Caveat: Snapsight is itself an ASR system, not human ground truth — the pasted
+text contains its own errors (name drift: "Chunming"/"Chong Ming"/"Cho Ming",
+"Pilot House"/"Pilot Pulse"; and it transcribes page UI labels such as
+"Original / Live Text / Takeaways" as if they were speech). Treat it as a peer
+system to compare against, not as truth.
