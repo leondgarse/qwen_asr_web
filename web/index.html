@@ -939,7 +939,12 @@ const CONTINUOUS_FLUSH_S = 20;     // commit a segment at least this often
 // segments give 76.3% WER, 5 s 56.8%, 8 s 47.7%, 12 s 49.2%, 20 s 51.1%. Too
 // short starves the model of context; too long invites repetition loops.
 const CONTINUOUS_MIN_S = 8.0;      // never commit a segment shorter than this
-const CONTINUOUS_PAUSE_S = 1.2;    // silence needed to treat a gap as a sentence end
+// Measured on real captured speech, silence runs inside continuous talking are
+// p90 0.36 s, p95 0.54 s, p99 0.81 s — *nothing* reaches 1.2 s. At that setting
+// the pause condition never fired and 85% of segments hit the 20 s cap instead,
+// cutting mid-phrase ("...or maybe having."). 0.55 s sits just above p95, so it
+// fires at genuine clause boundaries without splitting on every breath.
+const CONTINUOUS_PAUSE_S = 0.55;   // silence needed to treat a gap as a sentence end
 
 const PREROLL_FRAMES = 10;         // ~300 ms at 30 ms/frame
 let _preroll = [];
