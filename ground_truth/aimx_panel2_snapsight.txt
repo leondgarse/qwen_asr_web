@@ -1,0 +1,7 @@
+the companies are really. Keen to test and understand what they can do with AI and you know with sometimes some pretty successful deployment.
+But at the same time, multiple challenges are existing for those players as they look at to scaly.
+Now, before we get into the details of those challenges, I was saying it's quite important to maybe align on what we mean by scaling AI.
+So maybe can I ask maybe one of you, uh, Miguel, you're, you're looking at me, so, you know, maybe to, to define in your books what scaly eye means.
+So to me, I think that scaling AI is a matter of culture. For example, when we are running an enterprise and we want to make sure that every of our coworkers, every of our colleagues, fully embrace AI and from there they can then understand how do they leverage AI in their work.
+To then perform and do better because when we are talking about AI sometimes if you do not know or you do not embrace about AI, you will have a lot of fear. For example, when you're using chat GPT or you're using Google, Google Gemini, you also realize that is the information they've given to us even correct?
+And then when you read on the text, sometimes it looks like it sounds really right. Are they hallucinating or not? So the matter of trust is important, but the idea here is that they must build a culture where they know and they can scrutinize what the AI given to you in the first place so that you can now use it to do your work better.
