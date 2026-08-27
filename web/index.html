@@ -909,6 +909,40 @@ function updateInputGain(frameRms) {
   return _inputGain;
 }
 function resetInputGain() { _inputGain = 1; _loudRms = 0; }
+
+// ── Raw session capture (opt-in, for building test fixtures) ─────────────────
+// The server can only ever see what the VAD decides to send: on a sample session
+// 21% of wall time was dropped, and utterances overlapped, so the original stream
+// cannot be reconstructed from the per-utterance WAVs. This keeps the *unbroken*
+// pre-gain stream and uploads it once on stop. Enabled by the server telling us
+// capture is on, so there is a single switch (CAPTURE_AUDIO) rather than two.
+let captureEnabled = false;   // set from the ASR server's /health
+let _rawChunks = null, _rawSamples = 0;
+const RAW_MAX_SAMPLES = 16000 * 60 * 180;   // 3 h ceiling
+function rawStart() { _rawChunks = captureEnabled ? [] : null; _rawSamples = 0; }
+function rawPush(frame) {
+  if (!_rawChunks || _rawSamples >= RAW_MAX_SAMPLES) return;
+  _rawChunks.push(new Float32Array(frame));   // copy: caller reuses the buffer
+  _rawSamples += frame.length;
+}
+async function rawUpload() {
+  if (!_rawChunks || !_rawSamples) { _rawChunks = null; return; }
+  const pcm = new Int16Array(_rawSamples);
+  let o = 0;
+  for (const c of _rawChunks) {
+    for (let i = 0; i < c.length; i++) {
+      const v = Math.max(-1, Math.min(1, c[i]));
+      pcm[o++] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+    }
+  }
+  _rawChunks = null; _rawSamples = 0;
+  const name = (getSession()?.name || 'session').slice(0, 64);
+  const {host, port} = getServerBase();
+  try {
+    await fetch(`http://${host}:${port}/capture/raw?session=${encodeURIComponent(name)}`,
+                {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: pcm.buffer});
+  } catch (e) { console.warn('raw capture upload failed', e); }
+}
 function vadProfile() { return VAD_PROFILES[document.getElementById('audio-src-select').value] || VAD_PROFILES.mic; }
 function SILENCE_TRIGGER()  { return vadProfile().silenceTrigger; }
 function ENERGY_THRESHOLD() { return vadProfile().energyThreshold; }
@@ -1561,6 +1595,7 @@ function startStreamingUtterance() {
 function processVADFrame(frame) {
   // Apply adaptive gain before the energy test *and* before sending, so a quiet
   // room raises both VAD sensitivity and the level the model actually receives.
+  rawPush(frame);   // pre-gain, pre-VAD: the unmodified stream
   const g = updateInputGain(rms(frame));
   if (g > 1.01) { for (let i = 0; i < frame.length; i++) frame[i] = Math.max(-1, Math.min(1, frame[i] * g)); }
   const speech = rms(frame) > ENERGY_THRESHOLD();
@@ -1596,7 +1631,13 @@ function flushUtterance() {
 // ═══════════════════════════════════════════════════════════
 async function startRecording() {
   if (!getSession()) createSession();
+  try {
+    const {host, port} = getServerBase();
+    const h = await (await fetch(`http://${host}:${port}/health`)).json();
+    captureEnabled = !!h.capture_audio;
+  } catch { captureEnabled = false; }
   resetInputGain();   // re-adapt per session; a new room may have a new level
+  rawStart();
 
   if (!navigator.mediaDevices?.getUserMedia) {
     const isLocalhost = ['localhost','127.0.0.1','::1'].includes(location.hostname);
@@ -1646,6 +1687,7 @@ async function startRecording() {
 function stopRecording() {
   isRecording=false;
   if(isSpeaking) flushUtterance();
+  rawUpload();
   isSpeaking=false;
   if(processor){processor.disconnect();processor=null;}
   if(audioCtx){audioCtx.close().catch(()=>{});audioCtx=null;}

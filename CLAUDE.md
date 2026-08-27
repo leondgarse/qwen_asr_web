@@ -187,9 +187,19 @@ back to `webrtcvad` if `silero-vad` is not installed. The browser's own VAD in
 `web/index.html` is untouched: its ~12 s force-flush (`maxUttFrames`, lowered in commit
 `d2e5300`) exists for caption latency and drives the auto-answer timer.
 
-**Audio capture (`CAPTURE_AUDIO`).** Off by default. When enabled, every utterance received
-over the WebSocket is written to `captures/<session>/` as 16 kHz mono WAV, alongside a
-`transcript.jsonl` recording the text, language and duration the server produced live. Audio is
+**Audio capture (`CAPTURE_AUDIO`).** Off by default. When enabled, two things are stored under
+`captures/<session>/`, alongside a `transcript.jsonl` row per file:
+
+- `*_RAW.wav` — the browser's **continuous pre-VAD, pre-gain stream** for the whole recording,
+  uploaded once on stop via `POST /capture/raw`. Stored as int16 verbatim, bit-identical to
+  what the browser captured.
+- `*_NNN.wav` — the individual utterances the VAD sent, with the text the server produced live.
+
+The raw file exists because the utterance WAVs are *not* the session: they contain only what
+the VAD chose to send. On a measured session that discarded **21% of wall time**, and
+utterances overlapped, so the original stream cannot be reconstructed from them. Note audio
+never passes through `web_server.py` — the browser opens its WebSocket straight to the ASR
+server — so capture necessarily lives here. Audio is
 saved *before* auto-gain, so a capture reflects what the browser actually sent. The client
 passes its session name in the `start` message, so a whole lecture groups into one directory
 even though each utterance is a separate WebSocket. `CAPTURE_MAX_MB` (default 2048) stops the

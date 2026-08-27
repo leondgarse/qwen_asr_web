@@ -262,13 +262,26 @@ def _capture_dir_size_mb(path: str) -> float:
     return total / (1024 * 1024)
 
 
+def save_capture_pcm(session: str, pcm: np.ndarray, meta: dict) -> None:
+    """Write already-int16 PCM verbatim (used for the raw session stream)."""
+    _write_capture(session, 0, pcm, meta)
+
+
 def save_capture(session: str, index: int, audio_f32: np.ndarray, meta: dict) -> None:
     """Persist one utterance as 16-bit WAV plus a JSONL metadata line.
 
     Best-effort: capture must never break a live lecture, so every failure is
     logged and swallowed. Called with the raw (pre-gain) audio.
     """
-    if not CAPTURE_AUDIO or audio_f32.size == 0:
+    if audio_f32.size == 0:
+        return
+    _write_capture(session, index, (np.clip(audio_f32, -1.0, 1.0) * 32767.0).astype(np.int16), meta)
+
+
+def _write_capture(session: str, index: int, pcm: np.ndarray, meta: dict) -> None:
+    """Write one WAV + JSONL row. Best-effort: capture must never break a live
+    lecture, so every failure is logged and swallowed."""
+    if not CAPTURE_AUDIO or pcm.size == 0:
         return
     try:
         base = os.path.join(CAPTURE_DIR, session)
@@ -277,10 +290,10 @@ def save_capture(session: str, index: int, audio_f32: np.ndarray, meta: dict) ->
             logger.warning("capture: %s over CAPTURE_MAX_MB (%.0f MB), skipping",
                            CAPTURE_DIR, CAPTURE_MAX_MB)
             return
-        # Millisecond timestamp leads so files sort chronologically within a
-        # session: index restarts at 1 for every socket (one per utterance).
-        name = f"{int(time.time() * 1000)}_{index:03d}"
-        pcm = (np.clip(audio_f32, -1.0, 1.0) * 32767.0).astype(np.int16)
+        # index 0 is the continuous raw stream for the whole recording; 1+ are
+        # the individual utterances the VAD produced.
+        name = (f"{int(time.time() * 1000)}_RAW" if index == 0
+                else f"{int(time.time() * 1000)}_{index:03d}")
         with wave.open(os.path.join(base, name + ".wav"), "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)
@@ -887,6 +900,7 @@ async def health():
     return {
         "status": model_status,
         "backend": "llama.cpp",
+        "capture_audio": CAPTURE_AUDIO,
         "limits": {
             "max_concurrent_decode": MAX_CONCURRENT_DECODE,
             "max_concurrent_infer": MAX_CONCURRENT_INFER,
@@ -898,6 +912,30 @@ async def health():
             "ram_percent": mem.percent,
         },
     }
+
+
+@app.post("/capture/raw")
+async def capture_raw(request: Request, session: str = Query("session")):
+    """Store the browser's continuous pre-VAD stream for one recording.
+
+    The per-utterance WAVs written during a session only contain what the VAD
+    chose to send — on a sample session that discarded 21% of wall time, with
+    overlapping utterances, so the original cannot be reconstructed from them.
+    This keeps the unbroken stream alongside them.
+    """
+    if not CAPTURE_AUDIO:
+        raise HTTPException(status_code=403, detail="capture disabled (set CAPTURE_AUDIO=true)")
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="empty body")
+    pcm = np.frombuffer(body, dtype=np.int16)
+    name = re.sub(r"[^\w.-]", "_", session)[:64].strip("_") or "session"
+    # Written straight through as int16: a float round-trip costs a bit of
+    # precision for no benefit, and this file is meant to be a faithful fixture.
+    await asyncio.to_thread(save_capture_pcm, name, pcm,
+                            {"kind": "raw_session", "text": "", "language": None})
+    logger.info("capture: stored raw session %s (%.1f s)", name, pcm.size / STREAM_EXPECT_SR)
+    return {"saved": True, "seconds": round(pcm.size / STREAM_EXPECT_SR, 1)}
 
 
 @app.get("/vl/health")
