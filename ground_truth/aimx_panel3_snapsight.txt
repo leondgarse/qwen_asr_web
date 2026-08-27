@@ -1,0 +1,10 @@
+I think most organizations are facing today and I think a lot of people look at that challenge as insurmountable.
+Right, but the reality is how we, or rather how we advise people to approach this or how we've done or how my experiences to do this is scale with what you have first.
+Right. Use proxies, right? There's data out there that you can use as a proxy. It's just a matter of how you're building the relationship between different data points. That's one, right, the second thing is about interoperability.
+When you're scaling enterprise-wide capabilities. Let me give you an example.
+Most of the time we, we scale in one function, right? Let's say we scale in marketing intelligence in one in one market.
+Then the next thing you see, look, I want to look at commercial intelligence.
+But your marketing and your commercial intelligence data pipelines totally not connected, totally inter they can't interoperate, right? That's the other challenge. That challenge, I would say, takes a lot longer to solve, right? Because somebody needs to define what the relationship is, how interoperable that data is, whether you're going to have a data lake, all of that, right? So I think that's the 2nd big challenge that most people face from a data perspective.
+I think the last one that I just kind of like to add, which I think my fellow panelists have alluded to its capability.
+You can build the best AI platform, best AI tool, buy whatever, right?
+I think a lot of companies skip the process of training, skip the process of capability building, right?

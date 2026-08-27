@@ -917,6 +917,20 @@ function resetInputGain() { _inputGain = 1; _loudRms = 0; }
 // >=80% of their body energy, i.e. already mid-word, and transcripts routinely
 // lost the opening syllable. Keep a small rolling buffer of recent frames and
 // replay it when speech starts, so the model receives the true onset.
+// ── Continuous capture ──────────────────────────────────────────────────────
+// Gating on a fixed energyThreshold decides what the model is even allowed to
+// see, and it decides badly: measured on a real panel, 5.9 min of a 9.3 min
+// recording was discarded between utterances (19 of 48 gaps over 3 s, one of
+// 60 s) — more speech thrown away than transcribed. Snapsight, transcribing the
+// same room, lost none of it.
+//
+// With this on, every frame is streamed and the *server* segments with Silero
+// (vad_split), which is measurably better than an energy gate. The browser VAD
+// still runs, but only to drive caption cadence and the auto-answer timer —
+// it no longer decides what reaches the model.
+const CONTINUOUS_CAPTURE = (localStorage.getItem('continuous_capture') ?? '1') === '1';
+const CONTINUOUS_FLUSH_S = 20;     // commit a segment at least this often
+
 const PREROLL_FRAMES = 10;         // ~300 ms at 30 ms/frame
 let _preroll = [];
 function prerollPush(frame) {
@@ -1619,6 +1633,27 @@ function processVADFrame(frame) {
   if (g > 1.01) { for (let i = 0; i < frame.length; i++) frame[i] = Math.max(-1, Math.min(1, frame[i] * g)); }
   const speech = rms(frame) > ENERGY_THRESHOLD();
   prerollPush(frame);   // fed always: also used to bridge a force-flush boundary
+
+  if (CONTINUOUS_CAPTURE) {
+    // Stream everything; never gate on energy. The socket stays open and is
+    // committed on a real pause (so captions still appear at sentence breaks)
+    // or after CONTINUOUS_FLUSH_S of unbroken speech, whichever comes first.
+    if (!currentUtt) { currentUtt = startStreamingUtterance(); uttFrameCount = 0; }
+    currentUtt.sendFrame(frame);
+    uttFrameCount++;
+    if (speech) { silenceCount = 0; setRecStatus('Speaking…'); if (_autoAnswerTimer) cancelAutoAnswer(); }
+    else        { silenceCount++;   setRecStatus('Listening…'); }
+    const pause  = silenceCount >= SILENCE_TRIGGER();
+    const tooLong = uttFrameCount >= Math.round(CONTINUOUS_FLUSH_S * 1000 / 30);
+    if ((pause && uttFrameCount > SPEECH_TRIGGER) || tooLong) {
+      // Commit this stretch. The next frame reopens a socket immediately, so no
+      // audio falls between the two.
+      if (currentUtt) { currentUtt.stop(); currentUtt = null; }
+      silenceCount = 0; uttFrameCount = 0; setPartial('');
+    }
+    return;
+  }
+
   if (!isSpeaking) {
     if (speech) {
       if (++speechCount >= SPEECH_TRIGGER) {
@@ -1728,7 +1763,8 @@ async function startRecording() {
 
 function stopRecording() {
   isRecording=false;
-  if(isSpeaking) flushUtterance();
+  if (CONTINUOUS_CAPTURE) { if (currentUtt) { currentUtt.stop(); currentUtt = null; } }
+  else if (isSpeaking) flushUtterance();
   rawUpload();
   isSpeaking=false;
   if(processor){processor.disconnect();processor=null;}

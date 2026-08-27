@@ -54,6 +54,14 @@ Three-panel layout served from `web_server.py` at `http://localhost:8001`:
 - **Middle**: AI chat — Claude / Gemini / Mistral / Local VL; image attachment (🖼) visible only when `Local VL` selected; image thumbnails shown in history, clickable to enlarge (lightbox)
 - **Right**: Live mic transcription — VAD-based, language selector, **auto-translate** target selector (shown next to source language when VL available), PDF/MD/TXT context upload (📎), export (⇩)
 
+**Continuous capture** (`CONTINUOUS_CAPTURE`, on by default): every frame is streamed and the
+*server* segments with Silero, rather than the browser's energy gate deciding what the model
+sees. Measured on a real panel, the energy gate discarded 5.9 min of a 9.3 min recording
+between utterances (19 of 48 gaps over 3 s, one of 60 s) — more speech thrown away than
+transcribed, while Snapsight lost none of it in the same room. The browser VAD still runs, but
+only to drive caption cadence and the auto-answer timer. Disable by setting
+`localStorage.continuous_capture = '0'`.
+
 **VAD pre-roll**: the browser VAD needs `SPEECH_TRIGGER` (5) frames of speech before it opens an
 utterance, and those frames used to be discarded — so every utterance began ~150 ms into the
 first word. Measured on a real session, 9 of 20 utterances started at ≥80% of their body energy,
