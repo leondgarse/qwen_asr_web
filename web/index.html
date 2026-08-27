@@ -910,6 +910,21 @@ function updateInputGain(frameRms) {
 }
 function resetInputGain() { _inputGain = 1; _loudRms = 0; }
 
+// ── Pre-roll ────────────────────────────────────────────────────────────────
+// The VAD needs SPEECH_TRIGGER frames of speech before it opens an utterance,
+// and those frames used to be discarded — so every utterance began ~150 ms into
+// the first word. Measured on a real session, 9 of 20 utterances started at
+// >=80% of their body energy, i.e. already mid-word, and transcripts routinely
+// lost the opening syllable. Keep a small rolling buffer of recent frames and
+// replay it when speech starts, so the model receives the true onset.
+const PREROLL_FRAMES = 10;         // ~300 ms at 30 ms/frame
+let _preroll = [];
+function prerollPush(frame) {
+  _preroll.push(new Float32Array(frame));
+  if (_preroll.length > PREROLL_FRAMES) _preroll.shift();
+}
+function prerollDrain() { const f = _preroll; _preroll = []; return f; }
+
 // ── Raw session capture (opt-in, for building test fixtures) ─────────────────
 // The server can only ever see what the VAD decides to send: on a sample session
 // 21% of wall time was dropped, and utterances overlapped, so the original stream
@@ -1603,11 +1618,15 @@ function processVADFrame(frame) {
   const g = updateInputGain(rms(frame));
   if (g > 1.01) { for (let i = 0; i < frame.length; i++) frame[i] = Math.max(-1, Math.min(1, frame[i] * g)); }
   const speech = rms(frame) > ENERGY_THRESHOLD();
+  prerollPush(frame);   // fed always: also used to bridge a force-flush boundary
   if (!isSpeaking) {
     if (speech) {
       if (++speechCount >= SPEECH_TRIGGER) {
         isSpeaking = true; speechCount = 0; silenceCount = 0; uttFrameCount = 0;
         currentUtt = startStreamingUtterance();
+        // Replay the frames that triggered detection (plus a little before),
+        // otherwise the first word is clipped.
+        for (const f of prerollDrain()) currentUtt.sendFrame(f);
         setRecStatus('Speaking…');
         // Real silence is measured from the mic, not from when ASR finalizes.
         // Any new utterance means the speaker is still going — cancel pending answer.
@@ -1620,7 +1639,18 @@ function processVADFrame(frame) {
     if (!speech) {
       if (++silenceCount >= SILENCE_TRIGGER()) flushUtterance();
     } else { silenceCount = 0; }
-    if (uttFrameCount >= MAX_UTT_FRAMES()) flushUtterance();
+    if (uttFrameCount >= MAX_UTT_FRAMES()) {
+      // Force-flush caps latency on a long unbroken stretch of speech, but it
+      // necessarily cuts mid-sentence. Close the current utterance and open the
+      // next one immediately, replaying the pre-roll, so the words spoken across
+      // the boundary are not lost between two sockets.
+      const carry = _preroll.slice();
+      flushUtterance();
+      isSpeaking = true; speechCount = 0; silenceCount = 0; uttFrameCount = 0;
+      currentUtt = startStreamingUtterance();
+      for (const f of carry) currentUtt.sendFrame(f);
+      _preroll = [];
+    }
   }
 }
 

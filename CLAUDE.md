@@ -54,6 +54,13 @@ Three-panel layout served from `web_server.py` at `http://localhost:8001`:
 - **Middle**: AI chat — Claude / Gemini / Mistral / Local VL; image attachment (🖼) visible only when `Local VL` selected; image thumbnails shown in history, clickable to enlarge (lightbox)
 - **Right**: Live mic transcription — VAD-based, language selector, **auto-translate** target selector (shown next to source language when VL available), PDF/MD/TXT context upload (📎), export (⇩)
 
+**VAD pre-roll**: the browser VAD needs `SPEECH_TRIGGER` (5) frames of speech before it opens an
+utterance, and those frames used to be discarded — so every utterance began ~150 ms into the
+first word. Measured on a real session, 9 of 20 utterances started at ≥80% of their body energy,
+i.e. already mid-word. A rolling `PREROLL_FRAMES` (10, ~300 ms) buffer is now replayed when
+speech starts, and again across a force-flush boundary so words spoken at the cut are not lost
+between two sockets.
+
 **Panel divider**: Draggable 4px divider between chat and transcription panels; width saved to `localStorage`.
 
 **Auto-translation**: each new segment is auto-translated if target language ≠ source language and VL is available. Result stored in `entry.translated`, broadcast to viewers via `pushToServer()`. Manual `⇄ Translate` / `✕ Delete` buttons appear at bottom-right of each entry on hover.
