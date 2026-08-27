@@ -1,44 +1,46 @@
-# vLLM streaming test — blocked by GPU hardware
+# vLLM streaming test
 
 Tested whether vLLM's incremental streaming decode (`init_streaming_state` /
-`streaming_transcribe`) beats our chunked llama.cpp path on the captured AIMX
-audio. It could not be run.
+`streaming_transcribe`) beats the chunked llama.cpp path.
 
-## What was set up
+## Version matters — the purged code did work
 
-- Re-downloaded the safetensors weights removed in 0e993ca (4.4 GB,
-  `~/workspace/models/Qwen3-ASR-1.7B-hf`)
-- Built an isolated venv, because `~/workspace/Qwen3-ASR` pins
-  `transformers==4.57.6` while this environment runs 5.7.0 — importing the
-  model class under 5.x fails with
-  `check_model_inputs() missing 1 required positional argument`
-- Confirmed the streaming API is present and the model loads
-
-## Why it fails
-
-The engine dies during decode:
+vLLM **0.23.0** (installed fresh for this test) dies on this GPU:
 
 ```
 Cannot use FA version 2 ... FA2 is only supported on devices with compute capability >= 8
 RuntimeError: BatchPrefillWithPagedKVCache failed with error invalid argument
 ```
 
-Both Quadro RTX 8000s are **compute capability 7.5**. FlashAttention-2 and
-FlashInfer's paged-KV prefill kernel both require ≥ 8.0 (Ampere). Forcing
-`VLLM_ATTENTION_BACKEND` to XFORMERS, FLASH_ATTN and TRITON_ATTN all fail
-identically, so this is not a configuration issue.
+Both Quadro RTX 8000s are compute capability 7.5, and XFORMERS / FLASH_ATTN /
+TRITON_ATTN all fail identically.
 
-## Implication
+vLLM **0.20.0** — still installed system-wide, the version the pre-purge code
+ran against — loads and streams fine on the same hardware. So the earlier
+conclusion that "streaming is unavailable on this GPU" was wrong: it was
+unavailable on the *newer* vLLM only.
 
-The purge in 0e993ca is not reversible on this hardware for the streaming path
-— current vLLM cannot serve this model here at all. That also revises the
-earlier framing: we did not merely trade streaming for speed, the streaming
-option is unavailable regardless.
+## But streaming loses on output quality
 
-Remaining routes to a streaming decoder:
-- `qwen3-asr.cpp` (a separate runtime; the GGUF aligner exports on HF target it)
-- an older vLLM whose kernels still support SM75
-- Ampere-or-newer hardware
+Both backends on the same 10 minutes of real lecture audio
+(`captures/ACE5411_week3_08.27`):
 
-Until then, chunked decode with good segmentation is the ceiling, which makes
-the VAD/segment tuning the productive line of work.
+| | words | redundant words | wall | RTF |
+|---|---|---|---|---|
+| llama.cpp chunked | 1398 | 5 | 29 s | 0.049 |
+| vLLM 0.20.0 streaming | 6841 | 3611 | 133 s | 0.221 |
+
+10 minutes of lecture speech at 130-150 wpm is ~1300-1500 words, so llama.cpp
+is right and vLLM emits **4.6x** too much. Over half of vLLM's output is
+duplicated text — the streaming state re-emits already-fixed tokens
+("yeah as i mentioned the" x9). Per-phrase quality is comparable; the text is
+just repeated.
+
+De-duplicating that output is possible in principle, but it would be undoing a
+defect rather than gaining accuracy, and llama.cpp is also 4.5x faster.
+
+## Conclusion
+
+Keep llama.cpp. The streaming path is reachable on this hardware with vLLM
+0.20.0 but currently produces worse output, so the purge stands on quality
+grounds rather than on the hardware limit claimed earlier.
