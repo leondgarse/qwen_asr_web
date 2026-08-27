@@ -938,10 +938,14 @@ async function rawUpload() {
   _rawChunks = null; _rawSamples = 0;
   const name = (getSession()?.name || 'session').slice(0, 64);
   const {host, port} = getServerBase();
+  const url = `http://${host}:${port}/capture/raw?session=${encodeURIComponent(name)}`;
   try {
-    await fetch(`http://${host}:${port}/capture/raw?session=${encodeURIComponent(name)}`,
-                {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: pcm.buffer});
-  } catch (e) { console.warn('raw capture upload failed', e); }
+    // keepalive lets the upload survive the page being backgrounded, which is
+    // the normal case on a phone right after tapping Stop.
+    await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/octet-stream'},
+                      body: pcm.buffer, keepalive: pcm.byteLength < 60000});
+    console.log(`[capture] uploaded raw session (${(pcm.length/16000).toFixed(1)}s)`);
+  } catch (e) { console.warn('[capture] raw upload failed', e); }
 }
 function vadProfile() { return VAD_PROFILES[document.getElementById('audio-src-select').value] || VAD_PROFILES.mic; }
 function SILENCE_TRIGGER()  { return vadProfile().silenceTrigger; }
@@ -1631,11 +1635,19 @@ function flushUtterance() {
 // ═══════════════════════════════════════════════════════════
 async function startRecording() {
   if (!getSession()) createSession();
+  // Buffer the raw stream unless we positively learn capture is off. Failing
+  // open matters: if this probe fails (phone on a mapped port, transient
+  // network), the recording is unrepeatable, whereas a needless buffer is just
+  // discarded by the server's 403.
+  captureEnabled = true;
   try {
     const {host, port} = getServerBase();
     const h = await (await fetch(`http://${host}:${port}/health`)).json();
     captureEnabled = !!h.capture_audio;
-  } catch { captureEnabled = false; }
+    console.log('[capture] server capture_audio =', captureEnabled);
+  } catch (e) {
+    console.warn('[capture] /health probe failed, buffering anyway:', e);
+  }
   resetInputGain();   // re-adapt per session; a new room may have a new level
   rawStart();
 
