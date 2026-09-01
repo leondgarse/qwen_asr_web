@@ -34,7 +34,9 @@ safetensors layout where the encoder lives inside the same file. Passing only th
 starts the server successfully but silently disables audio/image input, so startup verifies
 the reported modality and fails loudly instead.
 
-**Requires llama.cpp ≥ b9173** providing `llama-server` on `PATH`. Earlier builds load the
+**Requires llama.cpp ≥ b9173** providing `llama-server` on `PATH` — build it with
+`./install_llama_cpp.sh` (detects your GPU's compute capability, bakes an RPATH so the
+binaries work outside an interactive shell, and verifies the build number). Earlier builds load the
 model and encode audio but transcribe everything as empty output.
 
 **Weights download themselves.** If the local GGUF pair is missing, the server falls back to

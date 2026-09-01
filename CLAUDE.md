@@ -17,7 +17,19 @@ python web_server.py                         # Web UI, binds 0.0.0.0:8001
 Server loads models in the background; poll `GET /health` until `"status": "ready"`.
 
 **Requires `llama-server` (llama.cpp ≥ b9173) on `PATH`.** Earlier builds load the model and
-encode audio but transcribe everything as empty output.
+encode audio but transcribe everything as empty output. Build it with:
+
+```bash
+./install_llama_cpp.sh          # clone/pull, build with CUDA, install to ~/.local
+CUDA_ARCH=86 ./install_llama_cpp.sh    # override autodetected compute capability
+```
+
+The script detects the GPU compute capability from `nvidia-smi`, bakes an
+`INSTALL_RPATH` so the binaries resolve their own libraries, and refuses to finish if the
+resulting build is older than b9173. The RPATH matters: a plain `cmake --install` leaves
+binaries that only work when `LD_LIBRARY_PATH` happens to contain the install prefix, so they
+run from an interactive shell but fail under systemd, cron, or any launcher with a clean
+environment.
 
 **Model files are optional.** If the local GGUF pair is missing, the server falls back to
 `llama-server -hf <repo>`, which downloads the decoder *and* its mmproj into the shared HF
