@@ -46,3 +46,12 @@ ground_truth/*.wav
 
 # Captured live audio (CAPTURE_AUDIO=true)
 captures/
+
+# Lecture recordings and their transcripts are course material, not public.
+# Only the AIMX conference samples (public sessions) stay tracked as fixtures.
+ground_truth/*
+!ground_truth/aimx_*
+!ground_truth/segment_tuning_README.md
+!ground_truth/vllm_streaming_test_README.md
+test_results/*
+!test_results/aimx_*
